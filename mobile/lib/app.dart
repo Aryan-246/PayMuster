@@ -13,6 +13,7 @@ import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/domain/auth_state.dart';
 import 'features/staff/presentation/staff_list_screen.dart';
 import 'features/staff/presentation/worker_profile_screen.dart';
+import 'features/attendance/presentation/attendance_screen.dart';
 
 // Create placeholder screens for the other tabs
 class PlaceholderScreen extends StatelessWidget {
@@ -106,7 +107,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/app/attendance',
-                builder: (context, state) => const PlaceholderScreen('Mark Attendance'),
+                builder: (context, state) => const AttendanceScreen(),
               ),
             ],
           ),
