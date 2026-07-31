@@ -8,6 +8,9 @@ import 'l10n/app_localizations.dart';
 import 'l10n/language_controller.dart';
 import 'widgets/paymuster_shell.dart';
 import 'features/dashboard/dashboard_screen.dart';
+import 'features/auth/presentation/login_screen.dart';
+import 'features/auth/presentation/auth_controller.dart';
+import 'features/auth/domain/auth_state.dart';
 
 // Create placeholder screens for the other tabs
 class PlaceholderScreen extends StatelessWidget {
@@ -33,68 +36,93 @@ final _shellNavigatorSitesKey = GlobalKey<NavigatorState>(debugLabel: 'sites');
 final _shellNavigatorAttendanceKey = GlobalKey<NavigatorState>(debugLabel: 'attendance');
 final _shellNavigatorPayrollKey = GlobalKey<NavigatorState>(debugLabel: 'payroll');
 
-final _router = GoRouter(
-  initialLocation: '/app/dashboard',
-  navigatorKey: _rootNavigatorKey,
-  routes: [
-    GoRoute(
-      path: '/',
-      redirect: (context, state) => '/app/dashboard',
-    ),
-    StatefulShellRoute.indexedStack(
-      builder: (context, state, navigationShell) {
-        return PayMusterShell(navigationShell: navigationShell);
-      },
-      branches: [
-        StatefulShellBranch(
-          navigatorKey: _shellNavigatorDashboardKey,
-          routes: [
-            GoRoute(
-              path: '/app/dashboard',
-              builder: (context, state) => const DashboardScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          navigatorKey: _shellNavigatorSitesKey,
-          routes: [
-            GoRoute(
-              path: '/app/sites',
-              builder: (context, state) => const PlaceholderScreen('Sites & People'),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          navigatorKey: _shellNavigatorAttendanceKey,
-          routes: [
-            GoRoute(
-              path: '/app/attendance',
-              builder: (context, state) => const PlaceholderScreen('Mark Attendance'),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          navigatorKey: _shellNavigatorPayrollKey,
-          routes: [
-            GoRoute(
-              path: '/app/payroll',
-              builder: (context, state) => const PlaceholderScreen('Payroll'),
-            ),
-          ],
-        ),
-      ],
-    ),
-  ],
-);
+final routerProvider = Provider<GoRouter>((ref) {
+  final authState = ref.watch(authControllerProvider);
 
-class PayMusterApp extends StatefulWidget {
+  return GoRouter(
+    initialLocation: '/app/dashboard',
+    navigatorKey: _rootNavigatorKey,
+    redirect: (context, state) {
+      final isAuth = authState.status == AuthStatus.authenticated;
+      final isSplash = authState.status == AuthStatus.initial || authState.status == AuthStatus.loading;
+      final isGoingToLogin = state.matchedLocation == '/login';
+
+      if (isSplash && !isAuth) return null; // let it stay on splash/login if it is loading
+
+      if (!isAuth && !isGoingToLogin) {
+        return '/login';
+      }
+      
+      if (isAuth && isGoingToLogin) {
+        return '/app/dashboard';
+      }
+      
+      return null; // no redirect
+    },
+    routes: [
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/',
+        redirect: (context, state) => '/app/dashboard',
+      ),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) {
+          return PayMusterShell(navigationShell: navigationShell);
+        },
+        branches: [
+          StatefulShellBranch(
+            navigatorKey: _shellNavigatorDashboardKey,
+            routes: [
+              GoRoute(
+                path: '/app/dashboard',
+                builder: (context, state) => const DashboardScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            navigatorKey: _shellNavigatorSitesKey,
+            routes: [
+              GoRoute(
+                path: '/app/sites',
+                builder: (context, state) => const PlaceholderScreen('Sites & People'),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            navigatorKey: _shellNavigatorAttendanceKey,
+            routes: [
+              GoRoute(
+                path: '/app/attendance',
+                builder: (context, state) => const PlaceholderScreen('Mark Attendance'),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            navigatorKey: _shellNavigatorPayrollKey,
+            routes: [
+              GoRoute(
+                path: '/app/payroll',
+                builder: (context, state) => const PlaceholderScreen('Payroll'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+});
+
+class PayMusterApp extends ConsumerStatefulWidget {
   const PayMusterApp({super.key});
 
   @override
-  State<PayMusterApp> createState() => _PayMusterAppState();
+  ConsumerState<PayMusterApp> createState() => _PayMusterAppState();
 }
 
-class _PayMusterAppState extends State<PayMusterApp> {
+class _PayMusterAppState extends ConsumerState<PayMusterApp> {
   late final ThemeController _themeController;
   late final LanguageController _languageController;
 
@@ -131,7 +159,7 @@ class _PayMusterAppState extends State<PayMusterApp> {
           theme: PayMusterTheme.lightTheme(),
           darkTheme: _themeController.darkTheme,
           themeMode: _themeController.materialThemeMode,
-          routerConfig: _router,
+          routerConfig: ref.watch(routerProvider),
         ),
       ),
     );
