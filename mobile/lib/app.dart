@@ -11,6 +11,8 @@ import 'features/dashboard/dashboard_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/domain/auth_state.dart';
+import 'features/staff/presentation/staff_list_screen.dart';
+import 'features/staff/presentation/worker_profile_screen.dart';
 
 // Create placeholder screens for the other tabs
 class PlaceholderScreen extends StatelessWidget {
@@ -87,7 +89,15 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/app/sites',
-                builder: (context, state) => const PlaceholderScreen('Sites & People'),
+                builder: (context, state) => const StaffListScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => WorkerProfileScreen(
+                      workerId: state.pathParameters['id']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
