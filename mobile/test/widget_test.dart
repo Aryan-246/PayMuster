@@ -10,10 +10,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:paymuster_mobile/app.dart';
 
 void main() {
-  testWidgets('app renders foundation screen', (WidgetTester tester) async {
+  testWidgets('app renders the theme-enabled shell', (WidgetTester tester) async {
     await tester.pumpWidget(const PayMusterApp());
+    await tester.pumpAndSettle();
 
-    expect(find.text('PayMuster Mobile'), findsOneWidget);
-    expect(find.text('Mobile foundation scaffold'), findsOneWidget);
+    expect(find.text('PayMuster'), findsOneWidget);
+    expect(find.text('Field Operations'), findsOneWidget);
+    expect(find.byTooltip('Theme'), findsOneWidget);
   });
 }
