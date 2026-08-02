@@ -3,31 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../theme/paymuster_tokens.dart';
 import '../../../components/layout/pm_card.dart';
 import '../../../components/foundation/pm_text_input.dart';
+import '../../../components/feedback/pm_list_skeleton.dart';
+import '../domain/payroll_record.dart';
+import '../data/payroll_repository.dart';
 
-class PayrollRecord {
-  final String workerName;
-  final String role;
-  final int daysWorked;
-  final double amount;
-  final String status; // Pending, Paid
-
-  const PayrollRecord({
-    required this.workerName,
-    required this.role,
-    required this.daysWorked,
-    required this.amount,
-    required this.status,
-  });
+class PayrollSearchNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+  void updateQuery(String query) => state = query;
 }
 
-final payrollListProvider = Provider<List<PayrollRecord>>((ref) {
-  return [
-    const PayrollRecord(workerName: 'Ramesh Kumar', role: 'Electrician', daysWorked: 24, amount: 19200, status: 'Pending'),
-    const PayrollRecord(workerName: 'Suresh Yadav', role: 'Welder', daysWorked: 22, amount: 20900, status: 'Paid'),
-    const PayrollRecord(workerName: 'Vijay Singh', role: 'Carpenter', daysWorked: 26, amount: 19500, status: 'Pending'),
-    const PayrollRecord(workerName: 'Mohammad Ali', role: 'Helper', daysWorked: 18, amount: 9000, status: 'Paid'),
-  ];
-});
+final payrollSearchProvider = NotifierProvider<PayrollSearchNotifier, String>(() => PayrollSearchNotifier());
 
 class PayrollScreen extends ConsumerWidget {
   const PayrollScreen({super.key});
@@ -36,7 +22,8 @@ class PayrollScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final records = ref.watch(payrollListProvider);
+    final recordsAsync = ref.watch(payrollListProvider('Jun 2024'));
+    final searchQuery = ref.watch(payrollSearchProvider).toLowerCase();
 
     return Scaffold(
       backgroundColor: isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight,
@@ -46,9 +33,25 @@ class PayrollScreen extends ConsumerWidget {
           children: [
             _buildHeader(isDark),
             _buildSummaryCard(isDark),
-            _buildSearchBar(isDark),
+            _buildSearchBar(isDark, ref),
             Expanded(
-              child: _buildPayrollList(records, isDark),
+              child: recordsAsync.when(
+                data: (records) {
+                  final filtered = records.where((r) {
+                    return r.workerName.toLowerCase().contains(searchQuery) ||
+                           r.role.toLowerCase().contains(searchQuery);
+                  }).toList();
+                  
+                  if (filtered.isEmpty) {
+                    return Center(
+                      child: Text('No workers found.', style: PMTypography.body.copyWith(color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight)),
+                    );
+                  }
+                  return _buildPayrollList(filtered, isDark);
+                },
+                loading: () => const PMListSkeleton(),
+                error: (error, stack) => Center(child: Text('Error loading payroll.', style: PMTypography.body.copyWith(color: PMColors.statusDangerDark))),
+              ),
             ),
           ],
         ),
@@ -163,12 +166,13 @@ class PayrollScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildSearchBar(bool isDark) {
+  Widget _buildSearchBar(bool isDark, WidgetRef ref) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
-      child: const PMTextInput(
+      child: PMTextInput(
         hintText: 'Search worker',
-        prefixIcon: Icon(Icons.search),
+        prefixIcon: const Icon(Icons.search),
+        onChanged: (val) => ref.read(payrollSearchProvider.notifier).updateQuery(val),
       ),
     );
   }

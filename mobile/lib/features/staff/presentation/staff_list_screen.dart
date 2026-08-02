@@ -4,8 +4,17 @@ import 'package:go_router/go_router.dart';
 import '../../../theme/paymuster_tokens.dart';
 import '../../../components/layout/pm_card.dart';
 import '../../../components/foundation/pm_text_input.dart';
+import '../../../components/feedback/pm_list_skeleton.dart';
 import '../domain/worker.dart';
 import '../data/worker_repository.dart';
+
+class StaffSearchNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+  void updateQuery(String query) => state = query;
+}
+
+final staffSearchProvider = NotifierProvider<StaffSearchNotifier, String>(() => StaffSearchNotifier());
 
 class StaffListScreen extends ConsumerWidget {
   const StaffListScreen({super.key});
@@ -13,6 +22,7 @@ class StaffListScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final workersAsync = ref.watch(workersListProvider);
+    final searchQuery = ref.watch(staffSearchProvider).toLowerCase();
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -23,12 +33,19 @@ class StaffListScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildHeader(isDark),
-            _buildSearchBar(isDark),
+            _buildSearchBar(isDark, ref),
             Expanded(
               child: workersAsync.when(
-                data: (workers) => _buildWorkerList(workers, isDark),
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (err, stack) => Center(child: Text('Error: $err')),
+                data: (workers) {
+                  final filtered = workers.where((w) {
+                    return w.fullName.toLowerCase().contains(searchQuery) ||
+                           w.role.toLowerCase().contains(searchQuery) ||
+                           w.employeeId.toLowerCase().contains(searchQuery);
+                  }).toList();
+                  return _buildWorkerList(filtered, isDark);
+                },
+                loading: () => const PMListSkeleton(),
+                error: (err, stack) => Center(child: Text('Error: $err', style: PMTypography.body.copyWith(color: PMColors.statusDangerDark))),
               ),
             ),
           ],
@@ -61,12 +78,13 @@ class StaffListScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildSearchBar(bool isDark) {
+  Widget _buildSearchBar(bool isDark, WidgetRef ref) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
-      child: const PMTextInput(
+      child: PMTextInput(
         hintText: 'Search by name, ID or role',
-        prefixIcon: Icon(Icons.search),
+        prefixIcon: const Icon(Icons.search),
+        onChanged: (val) => ref.read(staffSearchProvider.notifier).updateQuery(val),
       ),
     );
   }

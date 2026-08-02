@@ -64,8 +64,10 @@ class AttendanceController extends Notifier<AttendanceState> {
     if (currentRecord == null) return;
 
     final updatedRecord = currentRecord.copyWith(status: status);
+    final remainingWorkers = state.workers.where((w) => w.id != workerId).toList();
     
     state = state.copyWith(
+      workers: remainingWorkers,
       records: {
         ...state.records,
         workerId: updatedRecord,
@@ -78,7 +80,10 @@ class AttendanceController extends Notifier<AttendanceState> {
     for (final entry in state.records.entries) {
       updatedRecords[entry.key] = entry.value.copyWith(status: 'Present');
     }
-    state = state.copyWith(records: updatedRecords);
+    state = state.copyWith(
+      workers: [], // All marked
+      records: updatedRecords,
+    );
   }
 }
 

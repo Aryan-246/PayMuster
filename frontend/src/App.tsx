@@ -1,36 +1,96 @@
+import { useCallback, useEffect, useState } from 'react';
+import { AuthPanel } from './components/auth/AuthPanel';
+import { PayMusterDashboard } from './components/layout/PayMusterDashboard';
+import { postJson } from './lib/api';
+import {
+  clearStoredSession,
+  loadStoredSession,
+  restoreStoredSession,
+  type AuthSession,
+} from './lib/auth-session';
+import { I18nProvider } from './i18n/I18nProvider';
+import { ThemeProvider } from './theme/ThemeProvider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const queryClient = new QueryClient();
 
 function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <main className="min-h-screen bg-[#0b1114] px-6 py-10 text-slate-100">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 rounded-2xl border border-white/10 bg-[#182126] p-8 shadow-2xl">
-          <div className="space-y-2">
-            <p className="text-sm uppercase tracking-[0.3em] text-[#f4b400]">PayMuster</p>
-            <h1 className="text-3xl font-semibold">Project foundation scaffold</h1>
-            <p className="max-w-2xl text-sm text-slate-300">
-              The web foundation is in place with React, Vite, Tailwind CSS, and TanStack Query for the admin experience.
-            </p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-[#121a1f] p-4">
-              <h2 className="font-medium">Foundation</h2>
-              <p className="mt-2 text-sm text-slate-400">Base app shell and build pipeline.</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-[#121a1f] p-4">
-              <h2 className="font-medium">Stack</h2>
-              <p className="mt-2 text-sm text-slate-400">React, Vite, Tailwind, TanStack Query.</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-[#121a1f] p-4">
-              <h2 className="font-medium">Ready</h2>
-              <p className="mt-2 text-sm text-slate-400">Build verified and waiting for the next phase.</p>
-            </div>
-          </div>
+  const [session, setSession] = useState<AuthSession | null>(() => loadStoredSession());
+  const [restoringSession, setRestoringSession] = useState(() => loadStoredSession() !== null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    if (!restoringSession) {
+      return;
+    }
+
+    let active = true;
+    void restoreStoredSession().then((restoredSession) => {
+      if (active) {
+        setSession(restoredSession);
+        setRestoringSession(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [restoringSession]);
+
+  const handleAuthenticated = useCallback((nextSession: AuthSession) => {
+    setSession(nextSession);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (!session || signingOut) {
+      return;
+    }
+
+    setSigningOut(true);
+    try {
+      await postJson<{ message: string }>('/auth/logout', { refreshToken: session.refreshToken });
+    } catch {
+    } finally {
+      clearStoredSession();
+      setSession(null);
+      setSigningOut(false);
+    }
+  }, [session, signingOut]);
+
+  let content;
+  if (restoringSession) {
+    content = (
+      <main className="auth-page">
+        <div className="auth-restore" role="status">
+          <span className="auth-spinner" aria-hidden="true" />
+          Restoring your secure session…
         </div>
       </main>
-    </QueryClientProvider>
+    );
+  } else if (!session) {
+    content = <AuthPanel onAuthenticated={handleAuthenticated} />;
+  } else {
+    content = (
+      <>
+        <div className="auth-session-bar">
+          <span>Signed in as {session.user.name || session.user.email || 'PayMuster user'}</span>
+          <button type="button" onClick={signOut} disabled={signingOut}>
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
+        </div>
+        <PayMusterDashboard />
+      </>
+    );
+  }
+
+  return (
+    <I18nProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          {content}
+        </QueryClientProvider>
+      </ThemeProvider>
+    </I18nProvider>
   );
 }
 

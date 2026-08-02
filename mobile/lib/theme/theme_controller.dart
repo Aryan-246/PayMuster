@@ -8,7 +8,7 @@ enum ThemePreference { dark, light, amoled, system }
 class ThemeController extends ChangeNotifier {
   static const _storageKey = 'paymuster.theme-mode';
 
-  ThemePreference _preference = ThemePreference.dark;
+  ThemePreference _preference = ThemePreference.system;
 
   ThemePreference get preference => _preference;
 
@@ -28,7 +28,7 @@ class ThemeController extends ChangeNotifier {
     final stored = preferences.getString(_storageKey);
     _preference = ThemePreference.values.firstWhere(
       (value) => value.name == stored,
-      orElse: () => ThemePreference.dark,
+      orElse: () => ThemePreference.system,
     );
     notifyListeners();
   }

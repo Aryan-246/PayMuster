@@ -81,3 +81,9 @@ Refer to the `/docs` directory for the complete architectural specification. Eve
 2. Never generate the whole application in one response.
 3. If architecture needs improvement — stop, explain, improve first.
 4. Treat this project like software that will be maintained for 10 years.
+
+
+
+To run the flutter web on a custom port run the following command:
+
+flutter run -d chrome --web-hostname localhost --web-port 7357

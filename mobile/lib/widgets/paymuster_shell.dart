@@ -23,11 +23,61 @@ class PayMusterShell extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final l10n = AppLocalizations.of(context);
+    final size = MediaQuery.of(context).size;
+    final isWide = size.width >= 768; // Tablet/Desktop threshold
 
     final activeColor = isDark ? PMColors.brandPrimaryDark : PMColors.brandPrimaryLight;
     final inactiveColor = isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
     final bgColor = isDark ? PMColors.bgSurfaceDark : PMColors.bgSurfaceLight;
     final borderColor = isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight;
+
+    if (isWide) {
+      return Scaffold(
+        body: Row(
+          children: [
+            NavigationRail(
+              backgroundColor: bgColor,
+              selectedIndex: navigationShell.currentIndex,
+              onDestinationSelected: (index) => _onTap(context, index),
+              labelType: NavigationRailLabelType.all,
+              selectedLabelTextStyle: PMTypography.caption.copyWith(color: activeColor),
+              unselectedLabelTextStyle: PMTypography.caption.copyWith(color: inactiveColor),
+              selectedIconTheme: IconThemeData(color: activeColor, size: 24),
+              unselectedIconTheme: IconThemeData(color: inactiveColor, size: 24),
+              destinations: [
+                NavigationRailDestination(
+                  icon: const Icon(Icons.dashboard_outlined),
+                  selectedIcon: const Icon(Icons.dashboard),
+                  label: Text(l10n.text('dashboard')),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.groups_outlined),
+                  selectedIcon: const Icon(Icons.groups),
+                  label: Text(l10n.text('staff')),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.fact_check_outlined),
+                  selectedIcon: const Icon(Icons.fact_check),
+                  label: Text(l10n.text('attendance')),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  selectedIcon: const Icon(Icons.account_balance_wallet),
+                  label: Text(l10n.text('payroll')),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.settings_outlined),
+                  selectedIcon: const Icon(Icons.settings),
+                  label: const Text('Settings'),
+                ),
+              ],
+            ),
+            VerticalDivider(thickness: 1, width: 1, color: borderColor),
+            Expanded(child: navigationShell),
+          ],
+        ),
+      );
+    }
 
     return Scaffold(
       body: navigationShell,
@@ -78,6 +128,11 @@ class PayMusterShell extends StatelessWidget {
                 icon: const Icon(Icons.account_balance_wallet_outlined),
                 selectedIcon: const Icon(Icons.account_balance_wallet),
                 label: l10n.text('payroll'),
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: 'Settings',
               ),
             ],
           ),

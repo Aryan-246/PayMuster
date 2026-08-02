@@ -17,7 +17,7 @@ PayMuster is deployed for SMB-scale operations — not hyperscale enterprise inf
 | **Mobile Beta** | Firebase App Distribution | Internal testing builds before store submission |
 | **File Storage** | Supabase Storage | Photos (attendance, receipts, assets), documents (Aadhaar, PAN) |
 | **Push Notifications** | Firebase Cloud Messaging (FCM) | Push notifications to mobile devices |
-| **Email (Transactional)** | Resend or Postmark | Password reset, payment receipts, invitation emails |
+| **Email (Transactional)** | Gmail SMTP via Nodemailer | Password reset, payment receipts, invitation emails |
 | **DNS & CDN** | Cloudflare | DNS management, DDoS protection, edge caching for static assets |
 | **Payment Gateway** | Razorpay / Cashfree | Payment processing, webhook callbacks for Failed/Paid statuses |
 

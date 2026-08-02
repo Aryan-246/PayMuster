@@ -7,7 +7,12 @@ import 'theme/theme_controller.dart';
 import 'l10n/app_localizations.dart';
 import 'l10n/language_controller.dart';
 import 'widgets/paymuster_shell.dart';
-import 'features/dashboard/dashboard_screen.dart';
+import 'features/dashboard/presentation/admin_dashboard_screen.dart';
+import 'features/dashboard/presentation/owner_dashboard_screen.dart';
+import 'features/dashboard/presentation/manager_dashboard_screen.dart';
+import 'features/dashboard/presentation/supervisor_dashboard_screen.dart';
+import 'features/dashboard/presentation/worker_dashboard_screen.dart';
+import 'features/auth/domain/user.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/domain/auth_state.dart';
@@ -15,7 +20,16 @@ import 'features/staff/presentation/staff_list_screen.dart';
 import 'features/staff/presentation/worker_profile_screen.dart';
 import 'features/attendance/presentation/attendance_screen.dart';
 import 'features/payroll/presentation/payroll_screen.dart';
-
+import 'features/auth/presentation/splash_screen.dart';
+import 'features/auth/presentation/onboarding_screen.dart';
+import 'features/auth/presentation/welcome_screen.dart';
+import 'features/auth/presentation/signup_screen.dart';
+import 'features/auth/presentation/forgot_password_screen.dart';
+import 'features/auth/presentation/complete_profile_screen.dart';
+import 'features/auth/presentation/verify_email_screen.dart';
+import 'features/auth/presentation/reset_password_screen.dart';
+import 'features/settings/presentation/settings_screen.dart';
+import 'features/settings/presentation/profile_screen.dart';
 // Create placeholder screens for the other tabs
 class PlaceholderScreen extends StatelessWidget {
   final String title;
@@ -39,38 +53,109 @@ final _shellNavigatorDashboardKey = GlobalKey<NavigatorState>(debugLabel: 'dashb
 final _shellNavigatorSitesKey = GlobalKey<NavigatorState>(debugLabel: 'sites');
 final _shellNavigatorAttendanceKey = GlobalKey<NavigatorState>(debugLabel: 'attendance');
 final _shellNavigatorPayrollKey = GlobalKey<NavigatorState>(debugLabel: 'payroll');
+final _shellNavigatorSettingsKey = GlobalKey<NavigatorState>(debugLabel: 'settings');
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authControllerProvider);
+  final notifier = ValueNotifier<AuthState>(ref.read(authControllerProvider));
+  
+  ref.listen<AuthState>(authControllerProvider, (previous, next) {
+    notifier.value = next;
+  });
 
-  return GoRouter(
-    initialLocation: '/app/dashboard',
+  final router = GoRouter(
+    initialLocation: '/splash',
     navigatorKey: _rootNavigatorKey,
+    refreshListenable: notifier,
     redirect: (context, state) {
-      final isAuth = authState.status == AuthStatus.authenticated;
-      final isSplash = authState.status == AuthStatus.initial || authState.status == AuthStatus.loading;
-      final isGoingToLogin = state.matchedLocation == '/login';
+      final authState = notifier.value;
+      final status = authState.status;
+      final loc = state.matchedLocation;
 
-      if (isSplash && !isAuth) return null; // let it stay on splash/login if it is loading
+      if (authState.isInitializing) {
+        return loc == '/splash' ? null : '/splash';
+      }
 
-      if (!isAuth && !isGoingToLogin) {
-        return '/login';
+      final isAuthenticated = status == AuthStatus.authenticated && authState.user != null;
+      final isAuthPage = loc == '/login' ||
+          loc == '/signup' ||
+          loc == '/welcome' ||
+          loc == '/forgot-password' ||
+          loc == '/verify-email' ||
+          loc == '/reset-password';
+
+      // Handle pending verification
+      if (status == AuthStatus.pendingVerification) {
+        return loc == '/verify-email' ? null : '/verify-email';
       }
-      
-      if (isAuth && isGoingToLogin) {
-        return '/app/dashboard';
+
+      if (isAuthenticated) {
+        String expectedDashboard;
+        switch (authState.user!.role) {
+          case UserRole.superAdmin: expectedDashboard = '/app/dashboard/admin'; break;
+          case UserRole.companyOwner: expectedDashboard = '/app/dashboard/owner'; break;
+          case UserRole.siteManager: expectedDashboard = '/app/dashboard/manager'; break;
+          case UserRole.supervisor: expectedDashboard = '/app/dashboard/supervisor'; break;
+          case UserRole.worker: expectedDashboard = '/app/dashboard/worker'; break;
+        }
+
+        if (loc == '/' || loc == '/app/dashboard' || (loc.startsWith('/app/dashboard') && loc != expectedDashboard)) {
+          return expectedDashboard;
+        }
+
+        if (isAuthPage || loc == '/splash' || loc == '/onboarding') {
+          return expectedDashboard;
+        }
+        return null;
       }
-      
-      return null; // no redirect
+
+      if (!authState.hasSeenOnboarding) {
+        return loc == '/onboarding' ? null : '/onboarding';
+      }
+
+      if (isAuthPage) return null;
+
+      return '/welcome';
     },
     routes: [
+      GoRoute(
+        path: '/splash',
+        builder: (context, state) => const SplashScreen(),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        builder: (context, state) => const OnboardingScreen(),
+      ),
+      GoRoute(
+        path: '/welcome',
+        builder: (context, state) => const WelcomeScreen(),
+      ),
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
+        path: '/signup',
+        builder: (context, state) => const SignupScreen(),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/complete-profile',
+        builder: (context, state) => const CompleteProfileScreen(),
+      ),
+      GoRoute(
+        path: '/verify-email',
+        builder: (context, state) => const VerifyEmailScreen(),
+      ),
+      GoRoute(
+        path: '/reset-password',
+        builder: (context, state) => const ResetPasswordScreen(),
+      ),
+      GoRoute(
         path: '/',
-        redirect: (context, state) => '/app/dashboard',
+        redirect: (context, state) => '/splash',
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
@@ -81,8 +166,24 @@ final routerProvider = Provider<GoRouter>((ref) {
             navigatorKey: _shellNavigatorDashboardKey,
             routes: [
               GoRoute(
-                path: '/app/dashboard',
-                builder: (context, state) => const DashboardScreen(),
+                path: '/app/dashboard/admin',
+                builder: (context, state) => const AdminDashboardScreen(),
+              ),
+              GoRoute(
+                path: '/app/dashboard/owner',
+                builder: (context, state) => const OwnerDashboardScreen(),
+              ),
+              GoRoute(
+                path: '/app/dashboard/manager',
+                builder: (context, state) => const ManagerDashboardScreen(),
+              ),
+              GoRoute(
+                path: '/app/dashboard/supervisor',
+                builder: (context, state) => const SupervisorDashboardScreen(),
+              ),
+              GoRoute(
+                path: '/app/dashboard/worker',
+                builder: (context, state) => const WorkerDashboardScreen(),
               ),
             ],
           ),
@@ -121,10 +222,32 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
+          StatefulShellBranch(
+            navigatorKey: _shellNavigatorSettingsKey,
+            routes: [
+              GoRoute(
+                path: '/app/settings',
+                builder: (context, state) => const SettingsScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'profile',
+                    builder: (context, state) => const ProfileScreen(),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ],
       ),
     ],
   );
+
+  ref.onDispose(() {
+    notifier.dispose();
+    router.dispose();
+  });
+
+  return router;
 });
 
 class PayMusterApp extends ConsumerStatefulWidget {
@@ -158,20 +281,25 @@ class _PayMusterAppState extends ConsumerState<PayMusterApp> {
       notifier: _languageController,
       child: ThemeScope(
         notifier: _themeController,
-        child: MaterialApp.router(
-          title: 'PayMuster Mobile',
-          locale: _languageController.locale,
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate
-          ],
-          supportedLocales: AppLocalizations.supportedLocales,
-          theme: PayMusterTheme.lightTheme(),
-          darkTheme: _themeController.darkTheme,
-          themeMode: _themeController.materialThemeMode,
-          routerConfig: ref.watch(routerProvider),
+        child: ListenableBuilder(
+          listenable: Listenable.merge([_themeController, _languageController]),
+          builder: (context, _) {
+            return MaterialApp.router(
+              title: 'PayMuster Mobile',
+              locale: _languageController.locale,
+              localizationsDelegates: const [
+                AppLocalizations.delegate,
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate
+              ],
+              supportedLocales: AppLocalizations.supportedLocales,
+              theme: PayMusterTheme.lightTheme(),
+              darkTheme: _themeController.darkTheme,
+              themeMode: _themeController.materialThemeMode,
+              routerConfig: ref.watch(routerProvider),
+            );
+          },
         ),
       ),
     );

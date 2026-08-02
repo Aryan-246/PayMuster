@@ -2,8 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../theme/paymuster_tokens.dart';
 import '../../../components/layout/pm_card.dart';
+import '../../../components/feedback/pm_list_skeleton.dart';
 import '../../../components/foundation/pm_button.dart';
+import '../../../components/foundation/pm_text_input.dart';
 import 'attendance_controller.dart';
+
+class AttendanceSearchNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+  void updateQuery(String query) => state = query;
+}
+
+final attendanceSearchProvider = NotifierProvider<AttendanceSearchNotifier, String>(() => AttendanceSearchNotifier());
 
 class AttendanceScreen extends ConsumerWidget {
   const AttendanceScreen({super.key});
@@ -11,6 +21,7 @@ class AttendanceScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(attendanceControllerProvider);
+    final searchQuery = ref.watch(attendanceSearchProvider).toLowerCase();
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -21,15 +32,27 @@ class AttendanceScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildHeader(isDark, ref),
+            _buildSearchBar(isDark, ref),
             _buildSummaryBar(state, isDark),
             Expanded(
               child: state.isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _buildAttendanceList(state, isDark, ref),
+                  ? const PMListSkeleton()
+                  : _buildAttendanceList(state, searchQuery, isDark, ref),
             ),
             _buildSubmitButton(isDark),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar(bool isDark, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
+      child: PMTextInput(
+        hintText: 'Search worker',
+        prefixIcon: const Icon(Icons.search),
+        onChanged: (val) => ref.read(attendanceSearchProvider.notifier).updateQuery(val),
       ),
     );
   }
@@ -131,16 +154,25 @@ class AttendanceScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildAttendanceList(AttendanceState state, bool isDark, WidgetRef ref) {
+  Widget _buildAttendanceList(AttendanceState state, String searchQuery, bool isDark, WidgetRef ref) {
     if (state.workers.isEmpty) {
-      return const Center(child: Text('No workers found.'));
+      return Center(
+        child: Text('No workers found.', style: PMTypography.body.copyWith(color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight)),
+      );
+    }
+    
+    final filtered = state.workers.where((w) => w.fullName.toLowerCase().contains(searchQuery) || w.role.toLowerCase().contains(searchQuery)).toList();
+    if (filtered.isEmpty) {
+      return Center(
+        child: Text('No workers match the search.', style: PMTypography.body.copyWith(color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight)),
+      );
     }
 
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
-      itemCount: state.workers.length,
+      itemCount: filtered.length,
       itemBuilder: (context, index) {
-        final worker = state.workers[index];
+        final worker = filtered[index];
         final record = state.records[worker.id];
         final status = record?.status ?? 'Absent';
 

@@ -15,6 +15,7 @@ class PMTextInput extends StatelessWidget {
   final Widget? suffixIcon;
   final bool enabled;
   final int? maxLines;
+  final String? Function(String?)? validator;
 
   const PMTextInput({
     super.key,
@@ -31,6 +32,7 @@ class PMTextInput extends StatelessWidget {
     this.suffixIcon,
     this.enabled = true,
     this.maxLines = 1,
+    this.validator,
   });
 
   @override
@@ -68,6 +70,7 @@ class PMTextInput extends StatelessWidget {
             onFieldSubmitted: onSubmitted,
             enabled: enabled,
             maxLines: maxLines,
+            validator: validator,
             style: PMTypography.body.copyWith(
               color: isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight,
             ),

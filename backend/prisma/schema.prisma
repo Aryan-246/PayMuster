@@ -190,11 +190,16 @@ model User {
   orgId                String              @db.Uuid
   email                String?             @db.Text
   phone                String?             @db.Text
-  passwordHash         String              @db.Text
+  passwordHash         String?             @db.Text
   role                 UserRole
   firstName            String?             @db.Text
   lastName             String?             @db.Text
+  provider             String?             @db.Text
+  emailVerified        Boolean             @default(false)
   isActive             Boolean             @default(true)
+  isDisabled           Boolean             @default(false)
+  avatarUrl            String?             @db.Text
+  lastLoginAt          DateTime?           @db.Timestamptz(6)
   createdAt            DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime            @updatedAt @db.Timestamptz(6)
   deletedAt            DateTime?           @db.Timestamptz(6)
@@ -211,11 +216,33 @@ model User {
   paymentApprovals     PaymentApproval[]
   expensesPaid         Expense[]
   syncQueue            SyncQueue[]
+  authOtps             AuthOtp[]
 
   @@map("users")
   @@index([orgId], name: "idx_users_org_id")
   @@unique([orgId, email], name: "uq_users_org_id_email")
   @@unique([orgId, phone], name: "uq_users_org_id_phone")
+}
+
+model AuthOtp {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  otpHash      String   @db.Text
+  purpose      String   @db.Text
+  expiresAt    DateTime @db.Timestamptz(6)
+  used         Boolean  @default(false)
+  usedAt       DateTime? @db.Timestamptz(6)
+  resendCount  Int      @default(0)
+  attemptCount Int      @default(0)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("auth_otps")
+  @@index([userId], name: "idx_auth_otps_user_id")
+  @@index([purpose], name: "idx_auth_otps_purpose")
+  @@index([userId, purpose, createdAt], name: "idx_auth_otps_user_purpose_created_at")
 }
 
 model Session {
