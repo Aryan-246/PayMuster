@@ -30,7 +30,25 @@ app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'paymuster-backend' });
 });
 app.use('/auth', authRoutes);
-app.listen(config.port, () => {
-    logger.info('server.started', { port: config.port, environment: config.nodeEnv });
+const server = app.listen(config.port, '0.0.0.0', () => {
+    console.log('--- STARTUP DIAGNOSTICS ---');
+    console.log('server.listening:', server.listening);
+    console.log('server.address():', server.address());
+    console.log('Active handles:', process._getActiveHandles().length);
+    if (server.listening && server.address()) {
+        logger.info('server.started', { port: config.port, environment: config.nodeEnv });
+    }
+    else {
+        logger.error('server.not_listening', { port: config.port });
+    }
     void emailService.verifyConnection();
+});
+server.on('error', (error) => {
+    logger.error('server.failed_to_start', error, { port: config.port });
+    console.error(`\n[FATAL] Failed to start server on port ${config.port}`);
+    if (error.code === 'EADDRINUSE') {
+        console.error(`Port ${config.port} is already in use by another process.`);
+        console.error(`Please kill the existing process and try again.\n`);
+    }
+    process.exit(1);
 });
