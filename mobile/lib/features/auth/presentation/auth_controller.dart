@@ -244,21 +244,60 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  Future<void> deleteAccount() async {
-    state = state.copyWith(status: AuthStatus.loading);
+  Future<bool> requestDeleteAccountOtp(String password) async {
+    state = state.copyWith(errorMessage: null);
     try {
       final repository = ref.read(authProvider);
-      await repository.deleteAccount();
+      await repository.requestDeleteAccountOtp(password);
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        errorMessage: _cleanErrorMessage(e),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> verifyDeleteAccountOtp(String otp) async {
+    state = state.copyWith(errorMessage: null);
+    try {
+      final repository = ref.read(authProvider);
+      await repository.verifyDeleteAccountOtp(otp);
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        errorMessage: _cleanErrorMessage(e),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> deleteAccount(String otp) async {
+    state = state.copyWith(errorMessage: null);
+    try {
+      final repository = ref.read(authProvider);
+      await repository.deleteAccount(otp);
       state = AuthState(
         status: AuthStatus.unauthenticated,
         hasSeenOnboarding: state.hasSeenOnboarding,
         isInitializing: false,
       );
+      return true;
     } catch (e) {
       state = state.copyWith(
-        status: AuthStatus.error,
         errorMessage: _cleanErrorMessage(e),
       );
+      return false;
+    }
+  }
+
+  Future<void> fetchMe() async {
+    try {
+      final repository = ref.read(authProvider);
+      final user = await repository.fetchMe();
+      state = state.copyWith(user: user);
+    } catch (e) {
+      // Ignore background fetch error
     }
   }
 
@@ -266,10 +305,9 @@ class AuthController extends Notifier<AuthState> {
     try {
       final repository = ref.read(authProvider);
       await repository.updateUser(user);
-      state = state.copyWith(user: user);
+      state = state.copyWith(user: user, errorMessage: null);
     } catch (e) {
       state = state.copyWith(
-        status: AuthStatus.error,
         errorMessage: _cleanErrorMessage(e),
       );
     }

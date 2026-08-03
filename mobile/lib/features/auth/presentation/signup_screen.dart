@@ -207,7 +207,11 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Row(
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 4,
                     children: [
                       Text(
                         strength.label,
@@ -216,14 +220,15 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const Spacer(),
-                      _strengthIndicator('6+', _passwordController.text.length >= 6, isDark),
-                      const SizedBox(width: 8),
-                      _strengthIndicator('A-Z', RegExp(r'[A-Z]').hasMatch(_passwordController.text), isDark),
-                      const SizedBox(width: 8),
-                      _strengthIndicator('0-9', RegExp(r'\d').hasMatch(_passwordController.text), isDark),
-                      const SizedBox(width: 8),
-                      _strengthIndicator('!@#', RegExp(r'[^A-Za-z0-9]').hasMatch(_passwordController.text), isDark),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          _strengthIndicator('6+', _passwordController.text.length >= 6, isDark),
+                          _strengthIndicator('A-Z', RegExp(r'[A-Z]').hasMatch(_passwordController.text), isDark),
+                          _strengthIndicator('0-9', RegExp(r'\d').hasMatch(_passwordController.text), isDark),
+                          _strengthIndicator('!@#', RegExp(r'[^A-Za-z0-9]').hasMatch(_passwordController.text), isDark),
+                        ],
+                      ),
                     ],
                   ),
                 ],

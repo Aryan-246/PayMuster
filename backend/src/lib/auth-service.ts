@@ -7,10 +7,12 @@ import { emailService, EmailService, type EmailService as EmailServiceType } fro
 import { logger, maskEmail } from './logger.js';
 import { otpService, type IssuedOtp, type OtpPurpose, type OtpService } from './otp-service.js';
 import { prisma } from './prisma.js';
+import { eventBus, Events } from './events.js';
 
 interface UserRecord {
   id: string;
-  orgId: string;
+  orgId: string | null;
+  status: string;
   email: string | null;
   firstName: string | null;
   lastName: string | null;
@@ -29,7 +31,7 @@ interface UserWithPassword extends UserRecord {
 
 interface TokenClaims extends JwtPayload {
   userId?: string;
-  orgId?: string;
+  orgId?: string | null;
   type?: 'access' | 'refresh';
 }
 
@@ -47,7 +49,8 @@ export interface SanitizedUser {
   isActive: boolean;
   isDisabled: boolean;
   role: string;
-  orgId: string;
+  status: string;
+  orgId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,6 +68,7 @@ export interface AuthenticationResult extends AuthSession {
 const publicUserSelect = {
   id: true,
   orgId: true,
+  status: true,
   email: true,
   firstName: true,
   lastName: true,
@@ -126,6 +130,7 @@ export function sanitizeUser(user: UserRecord): SanitizedUser {
     isActive: user.isActive,
     isDisabled: user.isDisabled,
     role: user.role,
+    status: user.status,
     orgId: user.orgId,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -165,7 +170,7 @@ export class AuthService {
     const parts = nameParts(input.name);
     const passwordHash = await hashPassword(input.password);
 
-    // Step 1: Create user + org in a transaction
+    // Step 1: Create user in a transaction
     const user = await prisma.$transaction(async (tx) => {
       // Double-check inside transaction to prevent race condition
       const duplicate = await tx.user.findFirst({ where: { email }, select: { id: true } });
@@ -173,18 +178,14 @@ export class AuthService {
         throw new AppError('EMAIL_ALREADY_REGISTERED', 'An account already exists for this email address.', 409);
       }
 
-      const organization = await tx.organization.create({
-        data: { name: (parts.firstName || 'My') + ' Organization' },
-      });
-
       return tx.user.create({
         data: {
-          orgId: organization.id,
+          orgId: null, // Initial users don't belong to any org
           email,
           firstName: parts.firstName,
           lastName: parts.lastName,
           passwordHash,
-          role: 'OWNER',
+          role: 'STAFF', // Default role is STAFF
           provider: 'email',
           emailVerified: false,
           isActive: true,
@@ -297,7 +298,7 @@ export class AuthService {
     }
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const session = await this.issueSession(user.id, user.orgId, input.rememberMe, context);
+    const session = await this.issueSession(user.id, user.orgId, user.role, input.rememberMe, context);
 
     await this.sendNotificationWithoutBlocking(
       'auth.login_alert_delivery_failed',
@@ -403,19 +404,15 @@ export class AuthService {
       const suppliedName = (payload.name || input.name || '').trim();
       const parts = nameParts(suppliedName || 'Google User');
       user = await prisma.$transaction(async (tx) => {
-        const organization = await tx.organization.create({
-          data: { name: (parts.firstName || 'Google') + ' Organization' },
-        });
-
         return tx.user.create({
           data: {
-            orgId: organization.id,
+            orgId: null,
             email,
             firstName: payload.given_name || parts.firstName,
             lastName: payload.family_name || parts.lastName,
             provider: 'google',
             emailVerified: true,
-            role: 'OWNER',
+            role: 'STAFF',
             isActive: true,
           },
           select: publicUserSelect,
@@ -424,7 +421,7 @@ export class AuthService {
       isNewAccount = true;
     }
 
-    const session = await this.issueSession(user.id, user.orgId, true, context);
+    const session = await this.issueSession(user.id, user.orgId, user.role, true, context);
 
     if (isNewAccount) {
       await this.sendNotificationWithoutBlocking(
@@ -481,7 +478,7 @@ export class AuthService {
     this.assertUserCanAuthenticate(user);
 
     return {
-      accessToken: this.createAccessToken(claims.userId, claims.orgId),
+      accessToken: this.createAccessToken(claims.userId, claims.orgId, user.role),
       expiresAt: new Date(Date.now() + config.jwtAccessTtlMs),
     };
   }
@@ -498,34 +495,134 @@ export class AuthService {
     logger.info('auth.logout_completed');
   }
 
-  verifyAccessToken(token: string): { userId: string; orgId: string } {
+  verifyAccessToken(token: string): { userId: string; orgId: string | null } {
     const claims = this.verifyToken(token, 'access');
     return { userId: claims.userId, orgId: claims.orgId };
   }
 
-  async deleteAccount(userId: string): Promise<void> {
-    await prisma.$transaction(async (tx) => {
-      // 1. Delete exclusively-owned records
-      await tx.authOtp.deleteMany({ where: { userId } });
-      await tx.session.deleteMany({ where: { userId } });
-      await tx.notification.deleteMany({ where: { userId } });
-      await tx.syncQueue.deleteMany({ where: { userId } });
+  async requestDeleteAccountOtp(userId: string, passwordString: string, context?: AuthRequestContext): Promise<IssuedOtp> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.status === 'DELETED') {
+      throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+    
+    if (user.provider !== 'email') {
+      throw new AppError('INVALID_CREDENTIALS', 'Cannot verify password for non-email accounts.', 401);
+    }
 
-      // 2. Delete mandatory operational records that cannot exist without the user
-      await tx.paymentApproval.deleteMany({ where: { actorId: userId } });
-      await tx.correctionRequest.deleteMany({ where: { requestedById: userId } });
+    if (!user.passwordHash) {
+      throw new AppError('INVALID_CREDENTIALS', 'Invalid password.', 401);
+    }
 
-      // 3. Nullify optional references for business records
-      await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
-      await tx.payment.updateMany({ where: { approvedById: userId }, data: { approvedById: null } });
-      await tx.payRun.updateMany({ where: { approvedById: userId }, data: { approvedById: null } });
-      await tx.attendanceRecord.updateMany({ where: { markedById: userId }, data: { markedById: null } });
-      await tx.correctionRequest.updateMany({ where: { resolvedById: userId }, data: { resolvedById: null } });
-      await tx.expense.updateMany({ where: { paidById: userId }, data: { paidById: null } });
+    const isValid = await comparePassword(passwordString, user.passwordHash);
+    if (!isValid) {
+      throw new AppError('INVALID_CREDENTIALS', 'Incorrect password.', 401);
+    }
 
-      // 4. Finally, delete the user
-      await tx.user.delete({ where: { id: userId } });
+    const issued = await otpService.issue(userId, 'account-deletion');
+    
+    // Send email
+    await emailService.sendAccountDeletionEmail(user.email!, {
+      otp: issued.otp,
     });
+
+    return issued;
+  }
+
+  async checkDeleteAccountOtp(userId: string, otp: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.status === 'DELETED') {
+      throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+
+    await otpService.verify(userId, 'account-deletion', otp);
+  }
+
+  async verifyDeleteAccountOtp(userId: string, otp: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.status === 'DELETED') {
+      throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+
+    await otpService.consume(userId, 'account-deletion', otp);
+  }
+
+  async deleteAccount(userId: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+
+    if (user.role === 'SUPER_ADMIN') {
+      throw new AppError('ACTION_DENIED', 'Super Admin accounts cannot be permanently deleted.', 403);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Invalidate sessions
+      await tx.session.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      // 2. Soft delete the user and free up the email for reuse
+      const deletedEmail = `deleted-${Date.now()}-${user.email}`;
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          status: 'DELETED',
+          email: deletedEmail,
+          isActive: false,
+          isDisabled: true,
+          deletedAt: new Date(),
+          deleteReason: 'User requested account deletion',
+        },
+      });
+
+      // 3. Clean up auth OTPs
+      await tx.authOtp.deleteMany({ where: { userId } });
+
+      // 4. Handle Owner specific logic
+      if (user.role === 'OWNER' && user.orgId) {
+        // Dissolve company
+        await tx.organization.update({
+          where: { id: user.orgId },
+          data: {
+            status: 'DELETED',
+            joinCode: null,
+            deletedAt: new Date(),
+            deleteReason: 'Owner deleted account',
+            deletedBy: userId,
+          }
+        });
+
+        // Archive sites
+        await tx.site.updateMany({
+          where: { orgId: user.orgId },
+          data: { status: 'ARCHIVED' }
+        });
+
+        // Unlink users from the org so they become standalone
+        await tx.user.updateMany({
+          where: { orgId: user.orgId, id: { not: userId } },
+          data: { orgId: null }
+        });
+        
+        // Note: we leave attendance, audit logs, payroll history as is, 
+        // linked to the orgId and staff records. Staff records remain linked to orgId.
+      }
+    });
+
+    eventBus.emitEvent(Events.USER_DELETED, { userId });
+    
+    // Also log audit action if needed, though audit-listener can handle it if we send it
+    eventBus.emitEvent('AuditLog', {
+      orgId: user.orgId || null,
+      userId: user.id,
+      action: 'DELETE',
+      entityType: 'User',
+      entityId: userId,
+      changes: { status: 'DELETED' }
+    });
+
+    logger.info('auth.account_soft_deleted', { userId });
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
@@ -579,14 +676,16 @@ export class AuthService {
    * Rolls back a user and their organization created during a failed signup.
    * Called when email delivery fails after user creation.
    */
-  private async rollbackUserCreation(userId: string, orgId: string): Promise<void> {
+  private async rollbackUserCreation(userId: string, orgId: string | null): Promise<void> {
     try {
       // Delete OTPs, then user, then org (respecting FK constraints)
-      await prisma.$transaction([
-        prisma.authOtp.deleteMany({ where: { userId } }),
-        prisma.user.delete({ where: { id: userId } }),
-        prisma.organization.delete({ where: { id: orgId } }),
-      ]);
+      await prisma.$transaction(async (tx) => {
+        await tx.authOtp.deleteMany({ where: { userId } });
+        await tx.user.delete({ where: { id: userId } });
+        if (orgId) {
+          await tx.organization.delete({ where: { id: orgId } });
+        }
+      });
       logger.info('auth.signup_rollback_completed', { userId, orgId });
     } catch (rollbackError) {
       // Log but don't throw — the original error should propagate
@@ -596,17 +695,18 @@ export class AuthService {
 
   private async issueSession(
     userId: string,
-    orgId: string,
+    orgId: string | null,
+    role: string,
     rememberMe: boolean,
     context: AuthRequestContext,
   ): Promise<AuthSession> {
     const lifetimeMs = rememberMe ? config.rememberMeSessionMs : config.standardSessionMs;
-    const refreshToken = this.createRefreshToken(userId, orgId, lifetimeMs);
+    const refreshToken = this.createRefreshToken(userId, orgId, role, lifetimeMs);
     const expiresAt = new Date(Date.now() + lifetimeMs);
 
     await prisma.session.create({
       data: {
-        orgId,
+        orgId: orgId || null,
         userId,
         refreshTokenHash: hashToken(refreshToken),
         expiresAt,
@@ -616,13 +716,13 @@ export class AuthService {
     });
 
     return {
-      accessToken: this.createAccessToken(userId, orgId),
+      accessToken: this.createAccessToken(userId, orgId, role),
       refreshToken,
       expiresAt,
     };
   }
 
-  private createAccessToken(userId: string, orgId: string): string {
+  private createAccessToken(userId: string, orgId: string | null, role: string): string {
     const options: SignOptions = {
       algorithm: 'HS256',
       audience: config.jwtAudience,
@@ -630,10 +730,10 @@ export class AuthService {
       subject: userId,
       expiresIn: config.jwtAccessExpiresIn as SignOptions['expiresIn'],
     };
-    return jwt.sign({ userId, orgId, type: 'access' }, config.jwtSecret, options);
+    return jwt.sign({ userId, orgId, role, type: 'access' }, config.jwtSecret, options);
   }
 
-  private createRefreshToken(userId: string, orgId: string, lifetimeMs: number): string {
+  private createRefreshToken(userId: string, orgId: string | null, role: string, lifetimeMs: number): string {
     const options: SignOptions = {
       algorithm: 'HS256',
       audience: config.jwtAudience,
@@ -641,17 +741,17 @@ export class AuthService {
       subject: userId,
       expiresIn: Math.floor(lifetimeMs / 1_000) as SignOptions['expiresIn'],
     };
-    return jwt.sign({ userId, orgId, type: 'refresh' }, config.jwtSecret, options);
+    return jwt.sign({ userId, orgId, role, type: 'refresh' }, config.jwtSecret, options);
   }
 
-  private verifyRefreshToken(token: string): { userId: string; orgId: string } {
+  private verifyRefreshToken(token: string): { userId: string; orgId: string | null } {
     return this.verifyToken(token, 'refresh');
   }
 
   private verifyToken(
     token: string,
     expectedType: TokenClaims['type'],
-  ): { userId: string; orgId: string } {
+  ): { userId: string; orgId: string | null } {
     let claims: TokenClaims;
     try {
       claims = jwt.verify(token, config.jwtSecret, {
@@ -666,7 +766,7 @@ export class AuthService {
     if (
       claims.type !== expectedType ||
       typeof claims.userId !== 'string' ||
-      typeof claims.orgId !== 'string' ||
+      (typeof claims.orgId !== 'string' && claims.orgId !== null) ||
       claims.sub !== claims.userId
     ) {
       throw new AppError('SESSION_INVALID', 'Your session is invalid. Please sign in again.', 401);
@@ -675,7 +775,7 @@ export class AuthService {
     return { userId: claims.userId, orgId: claims.orgId };
   }
 
-  private assertUserCanAuthenticate(user: Pick<UserRecord, 'isDisabled' | 'isActive'>): void {
+  private assertUserCanAuthenticate(user: Pick<UserRecord, 'isDisabled' | 'isActive' | 'status'>): void {
     if (user.isDisabled) {
       throw new AppError(
         'ACCOUNT_DISABLED',
@@ -688,6 +788,14 @@ export class AuthService {
       throw new AppError(
         'ACCOUNT_INACTIVE',
         'This account is inactive. Contact support for help.',
+        403,
+      );
+    }
+
+    if (['DELETED', 'BLOCKED', 'INACTIVE', 'SUSPENDED', 'REJECTED'].includes(user.status)) {
+      throw new AppError(
+        'ACCOUNT_UNAVAILABLE',
+        `This account is ${user.status.toLowerCase()}.`,
         403,
       );
     }

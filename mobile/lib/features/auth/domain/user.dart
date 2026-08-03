@@ -1,9 +1,11 @@
 enum UserRole {
-  superAdmin,
-  companyOwner,
-  siteManager,
+  owner,
+  admin,
   supervisor,
-  worker
+  accountant,
+  staff,
+  superAdmin,
+  viewer
 }
 
 class User {
@@ -38,13 +40,15 @@ class User {
   }
 
   factory User.fromJson(Map<String, dynamic> json) {
-    final roleValue = (json['role'] as String? ?? 'worker').toLowerCase();
+    final roleValue = (json['role'] as String? ?? 'staff').toLowerCase();
     final role = switch (roleValue) {
-      'superadmin' || 'admin' => UserRole.superAdmin,
-      'companyowner' || 'owner' => UserRole.companyOwner,
-      'sitemanager' || 'manager' => UserRole.siteManager,
+      'superadmin' || 'super_admin' => UserRole.superAdmin,
+      'owner' => UserRole.owner,
+      'admin' => UserRole.admin,
       'supervisor' => UserRole.supervisor,
-      _ => UserRole.worker,
+      'accountant' => UserRole.accountant,
+      'viewer' => UserRole.viewer,
+      _ => UserRole.staff,
     };
 
     return User(

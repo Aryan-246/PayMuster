@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/paymuster_tokens.dart';
 import '../../components/foundation/pm_button.dart';
+import '../auth/presentation/auth_controller.dart';
+import '../auth/domain/user.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -11,6 +13,20 @@ class DashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    
+    final authState = ref.watch(authControllerProvider);
+    final user = authState.user;
+    
+    if (user == null) {
+      return Scaffold(
+        backgroundColor: isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    
+    if (user.organizationId == null) {
+      return _buildNoCompanyDashboard(context, isDark, user);
+    }
 
     return Scaffold(
       backgroundColor: isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight,
@@ -20,7 +36,7 @@ class DashboardScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildHeader(isDark),
+              _buildHeader(isDark, user),
               const SizedBox(height: PMSpacing.s4),
               _buildHeroActionCard(isDark, context),
               const SizedBox(height: PMSpacing.s4),
@@ -51,7 +67,64 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildHeader(bool isDark) {
+  Widget _buildNoCompanyDashboard(BuildContext context, bool isDark, User user) {
+    return Scaffold(
+      backgroundColor: isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(PMSpacing.s6),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Icon(Icons.business, size: 80, color: PMColors.brandPrimaryLight),
+              const SizedBox(height: PMSpacing.s6),
+              Text(
+                'Welcome, ${user.name ?? 'User'}!',
+                style: PMTypography.headline,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: PMSpacing.s2),
+              Text(
+                'You are not associated with any company yet.',
+                style: PMTypography.body.copyWith(
+                  color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: PMSpacing.s8),
+              PMButton.primary(
+                label: 'Join a Company',
+                onPressed: () => context.push('/app/join-company'),
+                icon: Icons.login,
+              ),
+              if (user.role == UserRole.owner) ...[
+                const SizedBox(height: PMSpacing.s4),
+                const Row(
+                  children: [
+                    Expanded(child: Divider()),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Text('OR'),
+                    ),
+                    Expanded(child: Divider()),
+                  ],
+                ),
+                const SizedBox(height: PMSpacing.s4),
+                PMButton.secondary(
+                  label: 'Register New Company',
+                  onPressed: () => context.push('/app/register-company'),
+                  icon: Icons.add_business,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(bool isDark, User user) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -60,7 +133,7 @@ class DashboardScreen extends ConsumerWidget {
           children: [
             Text('Mohali Tower A', style: PMTypography.title),
             Text(
-              'Good Morning, Aryan',
+              'Good Morning, ${user.name?.split(' ').first ?? 'User'}',
               style: PMTypography.body.copyWith(
                 color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
               ),

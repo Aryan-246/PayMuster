@@ -7,16 +7,10 @@ import 'theme/theme_controller.dart';
 import 'l10n/app_localizations.dart';
 import 'l10n/language_controller.dart';
 import 'widgets/paymuster_shell.dart';
-import 'features/dashboard/presentation/admin_dashboard_screen.dart';
-import 'features/dashboard/presentation/owner_dashboard_screen.dart';
-import 'features/dashboard/presentation/manager_dashboard_screen.dart';
-import 'features/dashboard/presentation/supervisor_dashboard_screen.dart';
-import 'features/dashboard/presentation/worker_dashboard_screen.dart';
-import 'features/auth/domain/user.dart';
+import 'features/dashboard/presentation/dashboard_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/domain/auth_state.dart';
-import 'features/staff/presentation/staff_list_screen.dart';
 import 'features/staff/presentation/worker_profile_screen.dart';
 import 'features/attendance/presentation/attendance_screen.dart';
 import 'features/payroll/presentation/payroll_screen.dart';
@@ -28,8 +22,11 @@ import 'features/auth/presentation/forgot_password_screen.dart';
 import 'features/auth/presentation/complete_profile_screen.dart';
 import 'features/auth/presentation/verify_email_screen.dart';
 import 'features/auth/presentation/reset_password_screen.dart';
-import 'features/settings/presentation/settings_screen.dart';
+import 'features/dashboard/presentation/more_screen.dart';
 import 'features/settings/presentation/profile_screen.dart';
+import 'features/settings/presentation/settings_screen.dart';
+import 'features/sites/presentation/sites_screen.dart';
+import 'features/company/presentation/join_company_screen.dart';
 // Create placeholder screens for the other tabs
 class PlaceholderScreen extends StatelessWidget {
   final String title;
@@ -75,7 +72,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return loc == '/splash' ? null : '/splash';
       }
 
-      final isAuthenticated = status == AuthStatus.authenticated && authState.user != null;
+      final isAuthenticated = authState.user != null && status != AuthStatus.unauthenticated;
       final isAuthPage = loc == '/login' ||
           loc == '/signup' ||
           loc == '/welcome' ||
@@ -89,21 +86,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
 
       if (isAuthenticated) {
-        String expectedDashboard;
-        switch (authState.user!.role) {
-          case UserRole.superAdmin: expectedDashboard = '/app/dashboard/admin'; break;
-          case UserRole.companyOwner: expectedDashboard = '/app/dashboard/owner'; break;
-          case UserRole.siteManager: expectedDashboard = '/app/dashboard/manager'; break;
-          case UserRole.supervisor: expectedDashboard = '/app/dashboard/supervisor'; break;
-          case UserRole.worker: expectedDashboard = '/app/dashboard/worker'; break;
-        }
-
-        if (loc == '/' || loc == '/app/dashboard' || (loc.startsWith('/app/dashboard') && loc != expectedDashboard)) {
-          return expectedDashboard;
+        if (loc == '/' || loc.startsWith('/app/dashboard')) {
+          if (loc != '/app/dashboard') {
+            return '/app/dashboard';
+          }
+          return null; // Stay on /app/dashboard
         }
 
         if (isAuthPage || loc == '/splash' || loc == '/onboarding') {
-          return expectedDashboard;
+          return '/app/dashboard';
         }
         return null;
       }
@@ -166,24 +157,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             navigatorKey: _shellNavigatorDashboardKey,
             routes: [
               GoRoute(
-                path: '/app/dashboard/admin',
-                builder: (context, state) => const AdminDashboardScreen(),
+                path: '/app/dashboard',
+                builder: (context, state) => const DashboardScreen(),
               ),
               GoRoute(
-                path: '/app/dashboard/owner',
-                builder: (context, state) => const OwnerDashboardScreen(),
-              ),
-              GoRoute(
-                path: '/app/dashboard/manager',
-                builder: (context, state) => const ManagerDashboardScreen(),
-              ),
-              GoRoute(
-                path: '/app/dashboard/supervisor',
-                builder: (context, state) => const SupervisorDashboardScreen(),
-              ),
-              GoRoute(
-                path: '/app/dashboard/worker',
-                builder: (context, state) => const WorkerDashboardScreen(),
+                path: '/app/join-company',
+                builder: (context, state) => const JoinCompanyScreen(),
               ),
             ],
           ),
@@ -192,7 +171,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/app/sites',
-                builder: (context, state) => const StaffListScreen(),
+                builder: (context, state) => const SitesScreen(),
                 routes: [
                   GoRoute(
                     path: ':id',
@@ -226,12 +205,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             navigatorKey: _shellNavigatorSettingsKey,
             routes: [
               GoRoute(
-                path: '/app/settings',
-                builder: (context, state) => const SettingsScreen(),
+                path: '/app/more',
+                builder: (context, state) => const MoreScreen(),
                 routes: [
                   GoRoute(
                     path: 'profile',
                     builder: (context, state) => const ProfileScreen(),
+                  ),
+                  GoRoute(
+                    path: 'settings',
+                    builder: (context, state) => const SettingsScreen(),
                   ),
                 ],
               ),

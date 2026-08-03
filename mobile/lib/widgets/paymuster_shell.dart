@@ -51,9 +51,9 @@ class PayMusterShell extends StatelessWidget {
                   label: Text(l10n.text('dashboard')),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.groups_outlined),
-                  selectedIcon: const Icon(Icons.groups),
-                  label: Text(l10n.text('staff')),
+                  icon: const Icon(Icons.business_outlined),
+                  selectedIcon: const Icon(Icons.business),
+                  label: const Text('Sites'),
                 ),
                 NavigationRailDestination(
                   icon: const Icon(Icons.fact_check_outlined),
@@ -66,9 +66,9 @@ class PayMusterShell extends StatelessWidget {
                   label: Text(l10n.text('payroll')),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.settings_outlined),
-                  selectedIcon: const Icon(Icons.settings),
-                  label: const Text('Settings'),
+                  icon: const Icon(Icons.more_horiz_outlined),
+                  selectedIcon: const Icon(Icons.more_horiz),
+                  label: const Text('More'),
                 ),
               ],
             ),
@@ -115,9 +115,9 @@ class PayMusterShell extends StatelessWidget {
                 label: l10n.text('dashboard'),
               ),
               NavigationDestination(
-                icon: const Icon(Icons.groups_outlined),
-                selectedIcon: const Icon(Icons.groups),
-                label: l10n.text('staff'),
+                icon: const Icon(Icons.business_outlined),
+                selectedIcon: const Icon(Icons.business),
+                label: 'Sites',
               ),
               NavigationDestination(
                 icon: const Icon(Icons.fact_check_outlined),
@@ -130,9 +130,9 @@ class PayMusterShell extends StatelessWidget {
                 label: l10n.text('payroll'),
               ),
               const NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: 'Settings',
+                icon: Icon(Icons.more_horiz_outlined),
+                selectedIcon: Icon(Icons.more_horiz),
+                label: 'More',
               ),
             ],
           ),

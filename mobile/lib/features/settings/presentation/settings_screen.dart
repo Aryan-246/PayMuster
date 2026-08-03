@@ -28,7 +28,7 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
-          _buildSectionHeader('Preferences', isDark),
+          _buildSectionHeader('Appearance', isDark),
           _buildSettingsTile(
             icon: Icons.dark_mode_outlined,
             title: 'Theme',
@@ -43,6 +43,75 @@ class SettingsScreen extends ConsumerWidget {
             title: 'Language',
             subtitle: LanguageScope.of(context).language.label,
             onTap: () => _showLanguageDialog(context, LanguageScope.of(context)),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Security', isDark),
+          _buildSettingsTile(
+            icon: Icons.lock_outline,
+            title: 'Change Password',
+            subtitle: 'Update your account password',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          _buildSettingsTile(
+            icon: Icons.devices,
+            title: 'Active Sessions',
+            subtitle: 'Manage devices logged into your account',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          _buildSettingsTile(
+            icon: Icons.phonelink_erase,
+            title: 'Logout All Devices',
+            subtitle: 'Sign out from all active sessions',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Notifications', isDark),
+          _buildSettingsTile(
+            icon: Icons.notifications_active_outlined,
+            title: 'Push Notifications',
+            subtitle: 'Manage app notifications',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          _buildSettingsTile(
+            icon: Icons.email_outlined,
+            title: 'Email Notifications',
+            subtitle: 'Manage email alerts',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Privacy', isDark),
+          _buildSettingsTile(
+            icon: Icons.import_export,
+            title: 'Export My Data',
+            subtitle: 'Request a copy of your data',
+            onTap: () => _showComingSoon(context),
+            isDark: isDark,
+            cardColor: cardColor,
+            textColor: textColor,
+          ),
+          _buildSettingsTile(
+            icon: Icons.download,
+            title: 'Download Account Data',
+            subtitle: 'Download your information archive',
+            onTap: () => _showComingSoon(context),
             isDark: isDark,
             cardColor: cardColor,
             textColor: textColor,
@@ -66,7 +135,6 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: 'Sign out of your account',
             onTap: () async {
               await ref.read(authControllerProvider.notifier).signOut();
-              // UI should not route manually. GoRouter handles state changes.
             },
             isDark: isDark,
             cardColor: cardColor,
@@ -79,7 +147,7 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icons.delete_forever,
             title: 'Delete Account',
             subtitle: 'Permanently delete your account',
-            onTap: () => _showDeleteConfirmation(context, ref),
+            onTap: () => _startDeleteFlow(context, ref),
             isDark: isDark,
             cardColor: cardColor,
             textColor: PMColors.statusDangerDark,
@@ -87,6 +155,12 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  void _showComingSoon(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Feature coming soon!')),
     );
   }
 
@@ -114,30 +188,32 @@ class SettingsScreen extends ConsumerWidget {
     required Color textColor,
     Color? iconColor,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
         color: cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight,
-        ),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: iconColor ?? textColor),
-        title: Text(title, style: PMTypography.bodyLarge.copyWith(color: textColor)),
-        subtitle: Text(
-          subtitle,
-          style: PMTypography.caption.copyWith(
-            color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight,
           ),
         ),
-        trailing: Icon(
-          Icons.chevron_right,
-          color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading: Icon(icon, color: iconColor ?? textColor),
+          title: Text(title, style: PMTypography.bodyLarge.copyWith(color: textColor)),
+          subtitle: Text(
+            subtitle,
+            style: PMTypography.caption.copyWith(
+              color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+            ),
+          ),
+          trailing: Icon(
+            Icons.chevron_right,
+            color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+          ),
+          onTap: onTap,
         ),
-        onTap: onTap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -188,7 +264,7 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  void _showDeleteConfirmation(BuildContext context, WidgetRef ref) {
+  void _startDeleteFlow(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -204,33 +280,216 @@ class SettingsScreen extends ConsumerWidget {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _showNameConfirmation(context, ref);
+              _showPasswordConfirmation(context, ref);
             },
-            child: Text('Delete', style: TextStyle(color: PMColors.statusDangerDark)),
+            child: Text('Next', style: TextStyle(color: PMColors.statusDangerDark)),
           ),
         ],
       ),
     );
   }
 
-  void _showNameConfirmation(BuildContext context, WidgetRef ref) {
-    final user = ref.read(authControllerProvider).user;
-    final expectedName = user?.name ?? '';
-    
-    // If the user somehow has no name, we can skip the typed check or ask for email.
-    // For safety, let's require the exact name if it exists, otherwise email.
-    final requiredString = expectedName.isNotEmpty ? expectedName : (user?.email ?? 'DELETE');
-    
-    String typedText = '';
+  void _showPasswordConfirmation(BuildContext context, WidgetRef ref) {
+    String password = '';
+    bool isLoading = false;
+    String? errorMsg;
 
     showDialog(
       context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Password Confirmation'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Please enter your password to continue:'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    obscureText: true,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      hintText: 'Password',
+                      errorText: errorMsg,
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        password = value;
+                        errorMsg = null;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                if (!isLoading)
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancel'),
+                  ),
+                if (isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: password.isEmpty
+                        ? null
+                        : () async {
+                            setState(() {
+                              isLoading = true;
+                              errorMsg = null;
+                            });
+                            
+                            final success = await ref
+                                .read(authControllerProvider.notifier)
+                                .requestDeleteAccountOtp(password);
+                            
+                            if (success) {
+                              if (ctx.mounted) {
+                                Navigator.pop(ctx);
+                                _showOtpVerification(ctx, ref);
+                              }
+                            } else {
+                              if (ctx.mounted) {
+                                setState(() {
+                                  isLoading = false;
+                                  errorMsg = ref.read(authControllerProvider).errorMessage ?? 'Invalid password';
+                                });
+                              }
+                            }
+                          },
+                    child: const Text('Next'),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showOtpVerification(BuildContext context, WidgetRef ref) {
+    String otp = '';
+    bool isLoading = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('OTP Verification'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('An OTP has been sent to your email. Enter it below:'),
+                  if (errorMsg != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      errorMsg!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  TextField(
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: '123456',
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        otp = value;
+                        errorMsg = null;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                if (isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: otp.length < 6
+                        ? null
+                        : () async {
+                            setState(() {
+                              isLoading = true;
+                              errorMsg = null;
+                            });
+
+                            final success = await ref
+                                .read(authControllerProvider.notifier)
+                                .verifyDeleteAccountOtp(otp);
+
+                            if (success) {
+                              if (ctx.mounted) {
+                                Navigator.pop(ctx);
+                                _showNameConfirmation(context, ref, otp);
+                              }
+                            } else {
+                              if (ctx.mounted) {
+                                setState(() {
+                                  isLoading = false;
+                                  errorMsg = ref.read(authControllerProvider).errorMessage ?? 'Invalid OTP';
+                                });
+                              }
+                            }
+                          },
+                    child: const Text('Verify'),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showNameConfirmation(BuildContext context, WidgetRef ref, String otp) {
+    final user = ref.read(authControllerProvider).user;
+    final expectedName = user?.name ?? '';
+    final requiredString = expectedName.isNotEmpty ? expectedName : (user?.email ?? 'DELETE');
+    
+    String typedText = '';
+    bool isLoading = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setState) {
             final isMatch = typedText == requiredString;
             return AlertDialog(
-              title: const Text('Confirm Deletion'),
+              title: const Text('Final Confirmation'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -244,43 +503,73 @@ class SettingsScreen extends ConsumerWidget {
                   const SizedBox(height: 16),
                   TextField(
                     autofocus: true,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
                       hintText: 'Type here to confirm',
+                      errorText: errorMsg,
                     ),
                     onChanged: (value) {
                       setState(() {
                         typedText = value;
+                        errorMsg = null;
                       });
                     },
                   ),
                 ],
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: isMatch
-                      ? () async {
-                          Navigator.pop(ctx);
-                          await ref.read(authControllerProvider.notifier).deleteAccount();
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Your account has been permanently deleted.')),
-                            );
-                            context.go('/welcome');
-                          }
-                        }
-                      : null,
-                  child: Text(
-                    'Delete',
-                    style: TextStyle(
-                      color: isMatch ? PMColors.statusDangerDark : Colors.grey,
+                if (!isLoading)
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancel'),
+                  ),
+                if (isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: !isMatch
+                        ? null
+                        : () async {
+                            setState(() {
+                              isLoading = true;
+                              errorMsg = null;
+                            });
+
+                            final success = await ref
+                                .read(authControllerProvider.notifier)
+                                .deleteAccount(otp);
+
+                            if (success) {
+                              if (ctx.mounted) {
+                                Navigator.pop(ctx);
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  const SnackBar(content: Text('Your account has been permanently deleted.')),
+                                );
+                                ctx.go('/welcome');
+                              }
+                            } else {
+                              if (ctx.mounted) {
+                                setState(() {
+                                  isLoading = false;
+                                  errorMsg = ref.read(authControllerProvider).errorMessage ?? 'Invalid OTP or failed to delete';
+                                });
+                              }
+                            }
+                          },
+                    child: Text(
+                      'Delete',
+                      style: TextStyle(
+                        color: isMatch ? PMColors.statusDangerDark : Colors.grey,
+                      ),
                     ),
                   ),
-                ),
               ],
             );
           },

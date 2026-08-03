@@ -19,7 +19,8 @@ type EmailTemplate =
   | 'welcome'
   | 'password-changed'
   | 'login-alert'
-  | 'google-login';
+  | 'google-login'
+  | 'account-deletion';
 
 interface RenderedEmail {
   html: string;
@@ -360,6 +361,36 @@ function renderTemplate(template: EmailTemplate, data: EmailTemplateData): Rende
         data,
         ignoreText: 'If this was not you, contact support immediately to secure your account.',
       });
+    case 'account-deletion':
+      return renderLayout({
+        title: '⚠️ Permanent Account Deletion Verification',
+        preview: 'WARNING: Someone requested permanent deletion of your PayMuster account.',
+        body:
+          '<p style="margin:0;"><strong>WARNING</strong></p>' +
+          '<p style="margin:14px 0 0;">Someone requested permanent deletion of your PayMuster account.</p>' +
+          '<p style="margin:14px 0 0;">After deletion:</p>' +
+          '<ul style="margin:14px 0 0; padding-left:20px;">' +
+          '<li>Account cannot be recovered</li>' +
+          '<li>Sessions will be revoked</li>' +
+          '<li>Company ownership may be removed</li>' +
+          '<li>This action is irreversible</li>' +
+          '</ul>' +
+          '<p style="margin:14px 0 0;">OTP<br><strong style="font-size:24px;">' + (data.otp || '') + '</strong></p>' +
+          '<p style="margin:14px 0 0;">Expires in 5 minutes.</p>',
+        textBody:
+          'WARNING\n\n' +
+          'Someone requested permanent deletion of your PayMuster account.\n\n' +
+          'After deletion:\n' +
+          '• Account cannot be recovered\n' +
+          '• Sessions will be revoked\n' +
+          '• Company ownership may be removed\n' +
+          '• This action is irreversible\n\n' +
+          'OTP\n' +
+          (data.otp || '') + '\n\n' +
+          'Expires in 5 minutes.',
+        data,
+        ignoreText: 'If this wasn\'t you, ignore this email.',
+      });
   }
 }
 
@@ -436,6 +467,10 @@ export class EmailService {
 
   async sendAccountCreatedNotification(to: string, data: EmailTemplateData): Promise<void> {
     await this.sendVerificationEmail(to, data);
+  }
+
+  async sendAccountDeletionEmail(to: string, data: EmailTemplateData): Promise<void> {
+    await this.send('account-deletion', to, '⚠️ Permanent Account Deletion Verification', data);
   }
 
   async sendPasswordResetEmail(to: string, data: EmailTemplateData): Promise<void> {

@@ -25,6 +25,15 @@ class RemoteAuthProvider implements AuthProviderBase {
       body: jsonEncode(body),
     );
 
+    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+    if (!contentType.contains('application/json')) {
+      throw AuthApiException(
+        'INVALID_RESPONSE',
+        'Server error: Expected JSON but received $contentType. Status: ${response.statusCode}',
+        response.statusCode,
+      );
+    }
+
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     if (response.statusCode >= 400) {
       final errorData = decoded['error'] as Map<String, dynamic>?;
@@ -60,14 +69,16 @@ class RemoteAuthProvider implements AuthProviderBase {
   }
 
   User _buildUser(Map<String, dynamic> payload) {
-    final rawUser = payload['user'] as Map<String, dynamic>;
-    final roleValue = (rawUser['role'] as String? ?? 'worker').toLowerCase();
+    final rawUser = payload['user'] as Map<String, dynamic>? ?? payload;
+    final roleValue = (rawUser['role'] as String? ?? 'staff').toLowerCase();
     final role = switch (roleValue) {
-      'superadmin' || 'admin' => UserRole.superAdmin,
-      'companyowner' || 'owner' => UserRole.companyOwner,
-      'sitemanager' || 'manager' => UserRole.siteManager,
+      'superadmin' || 'super_admin' => UserRole.superAdmin,
+      'owner' => UserRole.owner,
+      'admin' => UserRole.admin,
       'supervisor' => UserRole.supervisor,
-      _ => UserRole.worker,
+      'accountant' => UserRole.accountant,
+      'viewer' => UserRole.viewer,
+      _ => UserRole.staff,
     };
 
     return User(
@@ -183,7 +194,77 @@ class RemoteAuthProvider implements AuthProviderBase {
   }
 
   @override
-  Future<void> deleteAccount() async {
+  Future<void> requestDeleteAccountOtp(String password) async {
+    final prefs = await _prefs();
+    final accessToken = prefs.getString(_accessTokenKey);
+    
+    if (accessToken != null) {
+      final baseUrl = '${Env.apiBaseUrl}/auth';
+      final response = await http.post(
+        Uri.parse('$baseUrl/account/delete-otp'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $accessToken',
+        },
+        body: jsonEncode({'password': password}),
+      );
+      
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+      if (!contentType.contains('application/json')) {
+        throw AuthApiException(
+          'INVALID_RESPONSE',
+          'Server error: Expected JSON but received $contentType. Status: ${response.statusCode}',
+          response.statusCode,
+        );
+      }
+
+      if (response.statusCode >= 400) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final errorData = decoded['error'] as Map<String, dynamic>?;
+        final code = errorData?['code'] as String? ?? 'UNKNOWN';
+        final message = errorData?['message'] as String? ?? 'Failed to request account deletion.';
+        throw AuthApiException(code, message, response.statusCode);
+      }
+    }
+  }
+
+  @override
+  Future<void> verifyDeleteAccountOtp(String otp) async {
+    final prefs = await _prefs();
+    final accessToken = prefs.getString(_accessTokenKey);
+    
+    if (accessToken != null) {
+      final baseUrl = '${Env.apiBaseUrl}/auth';
+      final response = await http.post(
+        Uri.parse('$baseUrl/account/verify-delete-otp'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $accessToken',
+        },
+        body: jsonEncode({'otp': otp}),
+      );
+      
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+      if (!contentType.contains('application/json')) {
+        throw AuthApiException(
+          'INVALID_RESPONSE',
+          'Server error: Expected JSON but received $contentType. Status: ${response.statusCode}',
+          response.statusCode,
+        );
+      }
+      
+      if (response.statusCode >= 400) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final errorData = decoded['error'] as Map<String, dynamic>?;
+        final code = errorData?['code'] as String? ?? 'UNKNOWN';
+        final message = errorData?['message'] as String? ?? 'Failed to verify OTP.';
+        throw AuthApiException(code, message, response.statusCode);
+      }
+    }
+  }
+
+  @override
+  Future<void> deleteAccount(String otp) async {
     final prefs = await _prefs();
     final accessToken = prefs.getString(_accessTokenKey);
     
@@ -195,7 +276,17 @@ class RemoteAuthProvider implements AuthProviderBase {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $accessToken',
         },
+        body: jsonEncode({'otp': otp}),
       );
+      
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+      if (!contentType.contains('application/json')) {
+        throw AuthApiException(
+          'INVALID_RESPONSE',
+          'Server error: Expected JSON but received $contentType. Status: ${response.statusCode}',
+          response.statusCode,
+        );
+      }
       
       if (response.statusCode >= 400) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -204,9 +295,9 @@ class RemoteAuthProvider implements AuthProviderBase {
         final message = errorData?['message'] as String? ?? 'Failed to delete account.';
         throw AuthApiException(code, message, response.statusCode);
       }
+      
+      await _clearSession();
     }
-    
-    await _clearSession();
   }
 
   @override
@@ -224,6 +315,39 @@ class RemoteAuthProvider implements AuthProviderBase {
 
     final userJson = jsonDecode(rawUser) as Map<String, dynamic>;
     return User.fromJson(userJson);
+  }
+
+  @override
+  Future<User> fetchMe() async {
+    final prefs = await _prefs();
+    final accessToken = prefs.getString(_accessTokenKey);
+    if (accessToken == null) throw Exception('Not authenticated');
+
+    final baseUrl = '${Env.apiBaseUrl}/auth';
+    final response = await http.get(
+      Uri.parse('$baseUrl/me'),
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+      },
+    );
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode >= 400) {
+      final errorData = decoded['error'] as Map<String, dynamic>?;
+      final code = errorData?['code'] as String? ?? 'UNKNOWN';
+      final message = errorData?['message'] as String? ?? 'Failed to fetch user info.';
+      throw AuthApiException(code, message, response.statusCode);
+    }
+
+    final user = _buildUser(decoded);
+    await updateUser(user);
+    return user;
+  }
+
+  @override
+  Future<String?> getAccessToken() async {
+    final prefs = await _prefs();
+    return prefs.getString(_accessTokenKey);
   }
 
   @override

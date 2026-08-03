@@ -46,12 +46,12 @@ class LocalUserRepository {
       ),
       (
         email: 'owner@paymuster.com',
-        role: UserRole.companyOwner,
+        role: UserRole.owner,
         name: 'Company Owner',
       ),
       (
         email: 'manager@paymuster.com',
-        role: UserRole.siteManager,
+        role: UserRole.admin,
         name: 'Site Manager',
       ),
       (
@@ -61,7 +61,7 @@ class LocalUserRepository {
       ),
       (
         email: 'worker@paymuster.com',
-        role: UserRole.worker,
+        role: UserRole.staff,
         name: 'Worker',
       ),
     ];

@@ -128,30 +128,36 @@ class _CompleteProfileScreenState extends ConsumerState<CompleteProfileScreen> {
   String _formatRoleName(UserRole role) {
     switch (role) {
       case UserRole.superAdmin: return 'Super Admin';
-      case UserRole.companyOwner: return 'Company Owner';
-      case UserRole.siteManager: return 'Site Manager';
+      case UserRole.owner: return 'Company Owner';
+      case UserRole.admin: return 'Site Manager';
       case UserRole.supervisor: return 'Supervisor';
-      case UserRole.worker: return 'Worker';
+      case UserRole.staff: return 'Worker';
+      case UserRole.accountant: return 'Accountant';
+      case UserRole.viewer: return 'Viewer';
     }
   }
 
   String _getDescriptionForRole(UserRole role) {
     switch (role) {
       case UserRole.superAdmin: return 'Full system access';
-      case UserRole.companyOwner: return 'Manages entire company';
-      case UserRole.siteManager: return 'Manages multiple sites';
+      case UserRole.owner: return 'Manages entire company';
+      case UserRole.admin: return 'Manages multiple sites';
       case UserRole.supervisor: return 'Manages workers on a site';
-      case UserRole.worker: return 'Field worker';
+      case UserRole.staff: return 'Field worker';
+      case UserRole.accountant: return 'Handles payroll';
+      case UserRole.viewer: return 'View only access';
     }
   }
 
   IconData _getIconForRole(UserRole role) {
     switch (role) {
       case UserRole.superAdmin: return Icons.admin_panel_settings;
-      case UserRole.companyOwner: return Icons.business;
-      case UserRole.siteManager: return Icons.domain;
+      case UserRole.owner: return Icons.business;
+      case UserRole.admin: return Icons.domain;
       case UserRole.supervisor: return Icons.assignment_ind;
-      case UserRole.worker: return Icons.engineering;
+      case UserRole.staff: return Icons.engineering;
+      case UserRole.accountant: return Icons.calculate;
+      case UserRole.viewer: return Icons.visibility;
     }
   }
 }

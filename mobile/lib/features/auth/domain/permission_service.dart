@@ -48,7 +48,7 @@ class PermissionService {
         // Super admin can do absolutely everything
         return true;
         
-      case UserRole.companyOwner:
+      case UserRole.owner:
         return const [
           AppAction.createSiteManager,
           AppAction.createSupervisor,
@@ -69,7 +69,7 @@ class PermissionService {
           AppAction.useAIAssistant,
         ].contains(action);
         
-      case UserRole.siteManager:
+      case UserRole.admin:
         return const [
           AppAction.createSupervisor,
           AppAction.createWorker,
@@ -100,7 +100,7 @@ class PermissionService {
           AppAction.useAIAssistant,
         ].contains(action);
         
-      case UserRole.worker:
+      case UserRole.staff:
         return const [
           AppAction.viewProfile,
           AppAction.viewAttendance,
@@ -111,14 +111,33 @@ class PermissionService {
           AppAction.viewNotifications,
           AppAction.useAIAssistant,
         ].contains(action);
+      case UserRole.accountant:
+        return const [
+          AppAction.managePayroll,
+          AppAction.viewProfile,
+          AppAction.viewAttendance,
+          AppAction.viewSalary,
+          AppAction.raiseIssue,
+          AppAction.triggerSOS,
+          AppAction.viewDocuments,
+          AppAction.viewNotifications,
+          AppAction.useAIAssistant,
+        ].contains(action);
+      case UserRole.viewer:
+        return const [
+          AppAction.viewProfile,
+          AppAction.viewAttendance,
+          AppAction.viewDocuments,
+          AppAction.viewNotifications,
+        ].contains(action);
     }
   }
   
   bool canCreateRole(UserRole creator, UserRole target) {
     if (creator == UserRole.superAdmin) return true;
-    if (creator == UserRole.companyOwner && target != UserRole.superAdmin && target != UserRole.companyOwner) return true;
-    if (creator == UserRole.siteManager && (target == UserRole.supervisor || target == UserRole.worker)) return true;
-    if (creator == UserRole.supervisor && target == UserRole.worker) return true;
+    if (creator == UserRole.owner && target != UserRole.superAdmin && target != UserRole.owner) return true;
+    if (creator == UserRole.admin && (target == UserRole.supervisor || target == UserRole.staff)) return true;
+    if (creator == UserRole.supervisor && target == UserRole.staff) return true;
     
     return false;
   }

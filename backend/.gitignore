@@ -3,3 +3,19 @@ node_modules
 .env
 
 /generated/prisma
+dist/
+coverage/
+*.log
+*.txt
+*.cjs
+*.js
+!src/**/*.js
+!package.json
+!tsconfig.json
+!jest.config.js
+!eslint.config.js
+# exclude test files that are temp
+test_*.ts
+scratch_*.ts
+check_*.ts
+debug*.ts

@@ -7,12 +7,51 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+  BLOCKED
+  DELETED
+  INACTIVE
+}
+
+enum CompanyStatus {
+  DRAFT
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
 enum UserRole {
   OWNER
   ADMIN
   SUPERVISOR
   ACCOUNTANT
   STAFF
+  SUPER_ADMIN
   VIEWER
 }
 
@@ -22,6 +61,11 @@ enum AuditAction {
   DELETE
   APPROVE
   REJECT
+  PROMOTE
+  DEMOTE
+  SUSPEND
+  RESTORE
+  TERMINATE
 }
 
 enum WorkerType {
@@ -47,9 +91,19 @@ enum SalaryRateType {
 }
 
 enum SiteStatus {
+  DRAFT
+  PENDING
   ACTIVE
-  ON_HOLD
-  COMPLETED
+  SUSPENDED
+  ARCHIVED
+  DELETED
+}
+
+enum SiteRole {
+  MANAGER
+  SUPERVISOR
+  WORKER
+  GUEST
 }
 
 enum AttendanceStatus {
@@ -141,761 +195,991 @@ enum SyncStatus {
 }
 
 model Organization {
-  id               String         @id @default(uuid()) @db.Uuid
-  name             String         @db.Text
-  logoUrl          String?        @db.Text
-  gstin            String?        @db.Text
-  settings         Json?
-  subscriptionTier String?        @db.Text
-  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime       @updatedAt @db.Timestamptz(6)
-  deletedAt        DateTime?      @db.Timestamptz(6)
+  id               String        @id @default(uuid()) @db.Uuid
+  name             String        @db.Text
+  referenceCode    String?       @unique @db.Text
+  joinCode         String?       @unique @db.Text
+  status           CompanyStatus @default(PENDING)
+  logoUrl          String?       @db.Text
+  gstin            String?       @db.Text
+  subscriptionTier String?       @db.Text
+  createdAt        DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?     @db.Timestamptz(6)
+  deletedBy        String?       @db.Uuid
+  deleteReason     String?       @db.Text
 
-  users               User[]
-  sessions            Session[]
-  auditLogs           AuditLog[]
-  staff               Staff[]
-  sites               Site[]
-  holidays            Holiday[]
-  clients             Client[]
-  vendors             Vendor[]
-  notifications       Notification[]
-  syncQueue           SyncQueue[]
-  staffDocuments      StaffDocument[]
-  salaryRules         SalaryRule[]
-  shifts              Shift[]
-  siteAssignments     SiteAssignment[]
-  attendanceRecords   AttendanceRecord[]
-  correctionRequests  CorrectionRequest[]
-  payRuns             PayRun[]
-  payRunItems         PayRunItem[]
-  payments            Payment[]
-  paymentApprovals    PaymentApproval[]
-  advances            Advance[]
-  assetAssignments    AssetAssignment[]
-  materialStock       MaterialStock[]
+  settings             CompanySettings?
+  joinRequests         CompanyJoinRequest[]
+  promotionRequests    PromotionRequest[]
+  invitations          Invitation[]
+  users                User[]
+  sessions             Session[]
+  auditLogs            AuditLog[]
+  staff                Staff[]
+  sites                Site[]
+  holidays             Holiday[]
+  clients              Client[]
+  vendors              Vendor[]
+  notifications        Notification[]
+  syncQueue            SyncQueue[]
+  staffDocuments       StaffDocument[]
+  salaryRules          SalaryRule[]
+  shifts               Shift[]
+  siteAssignments      SiteAssignment[]
+  attendanceRecords    AttendanceRecord[]
+  correctionRequests   CorrectionRequest[]
+  payRuns              PayRun[]
+  payRunItems          PayRunItem[]
+  payments             Payment[]
+  paymentApprovals     PaymentApproval[]
+  advances             Advance[]
+  assetAssignments     AssetAssignment[]
+  materialStock        MaterialStock[]
   materialTransactions MaterialTransaction[]
-  vendorPayments      VendorPayment[]
-  expenses            Expense[]
-  materials           Material[]
-  assets              Asset[]
-  payCycles           PayCycle[]
+  vendorPayments       VendorPayment[]
+  expenses             Expense[]
+  materials            Material[]
+  assets               Asset[]
+  payCycles            PayCycle[]
 
-  @@map("organizations")
+  siteMembers SiteMember[]
+
   @@index([name], name: "idx_organizations_name")
+  @@map("organizations")
 }
 
 model User {
-  id                   String              @id @default(uuid()) @db.Uuid
-  orgId                String              @db.Uuid
-  email                String?             @db.Text
-  phone                String?             @db.Text
-  passwordHash         String?             @db.Text
-  role                 UserRole
-  firstName            String?             @db.Text
-  lastName             String?             @db.Text
-  provider             String?             @db.Text
-  emailVerified        Boolean             @default(false)
-  isActive             Boolean             @default(true)
-  isDisabled           Boolean             @default(false)
-  avatarUrl            String?             @db.Text
-  lastLoginAt          DateTime?           @db.Timestamptz(6)
-  createdAt            DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime            @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?           @db.Timestamptz(6)
+  id            String     @id @default(uuid()) @db.Uuid
+  orgId         String?    @db.Uuid
+  status        UserStatus @default(PENDING)
+  email         String?    @db.Text
+  phone         String?    @db.Text
+  passwordHash  String?    @db.Text
+  role          UserRole
+  firstName     String?    @db.Text
+  lastName      String?    @db.Text
+  provider      String?    @db.Text
+  emailVerified Boolean    @default(false)
+  isActive      Boolean    @default(true)
+  isDisabled    Boolean    @default(false)
+  avatarUrl     String?    @db.Text
+  lastLoginAt   DateTime?  @db.Timestamptz(6)
+  createdAt     DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?  @db.Timestamptz(6)
+  deletedBy     String?    @db.Uuid
+  deleteReason  String?    @db.Text
 
-  org                  Organization        @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  org                  Organization?        @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  joinRequests         CompanyJoinRequest[]
+  promotionRequests    PromotionRequest[]
+  ownerRequests        OwnerRequest[]
+  invitationsSent      Invitation[]
   sessions             Session[]
   auditLogs            AuditLog[]
   notifications        Notification[]
-  approvedPayments     Payment[]           @relation("PaymentApprovedBy")
-  approvedPayRuns      PayRun[]            @relation("PayRunApprovedBy")
-  markedAttendance     AttendanceRecord[]  @relation("AttendanceMarkedBy")
-  requestedCorrections CorrectionRequest[] @relation("CorrectionRequestedBy")
-  resolvedCorrections  CorrectionRequest[] @relation("CorrectionResolvedBy")
+  approvedPayments     Payment[]            @relation("PaymentApprovedBy")
+  approvedPayRuns      PayRun[]             @relation("PayRunApprovedBy")
+  markedAttendance     AttendanceRecord[]   @relation("AttendanceMarkedBy")
+  requestedCorrections CorrectionRequest[]  @relation("CorrectionRequestedBy")
+  resolvedCorrections  CorrectionRequest[]  @relation("CorrectionResolvedBy")
   paymentApprovals     PaymentApproval[]
   expensesPaid         Expense[]
   syncQueue            SyncQueue[]
   authOtps             AuthOtp[]
+  siteMembers          SiteMember[]
+  siteHistoryChanges   SiteHistory[]
 
-  @@map("users")
-  @@index([orgId], name: "idx_users_org_id")
   @@unique([orgId, email], name: "uq_users_org_id_email")
   @@unique([orgId, phone], name: "uq_users_org_id_phone")
+  @@index([orgId], name: "idx_users_org_id")
+  @@map("users")
 }
 
 model AuthOtp {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid
-  otpHash      String   @db.Text
-  purpose      String   @db.Text
-  expiresAt    DateTime @db.Timestamptz(6)
-  used         Boolean  @default(false)
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  otpHash      String    @db.Text
+  purpose      String    @db.Text
+  expiresAt    DateTime  @db.Timestamptz(6)
+  used         Boolean   @default(false)
   usedAt       DateTime? @db.Timestamptz(6)
-  resendCount  Int      @default(0)
-  attemptCount Int      @default(0)
-  createdAt    DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+  resendCount  Int       @default(0)
+  attemptCount Int       @default(0)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@map("auth_otps")
   @@index([userId], name: "idx_auth_otps_user_id")
   @@index([purpose], name: "idx_auth_otps_purpose")
   @@index([userId, purpose, createdAt], name: "idx_auth_otps_user_purpose_created_at")
+  @@map("auth_otps")
 }
 
 model Session {
-  id               String       @id @default(uuid()) @db.Uuid
-  orgId            String       @db.Uuid
-  userId           String       @db.Uuid
-  deviceInfo       String?      @db.Text
-  ipAddress        String?      @db.Text
-  refreshTokenHash String       @db.Text
-  expiresAt        DateTime     @db.Timestamptz(6)
-  revokedAt        DateTime?    @db.Timestamptz(6)
-  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  id               String    @id @default(uuid()) @db.Uuid
+  orgId            String?   @db.Uuid
+  userId           String    @db.Uuid
+  deviceInfo       String?   @db.Text
+  ipAddress        String?   @db.Text
+  refreshTokenHash String    @db.Text
+  expiresAt        DateTime  @db.Timestamptz(6)
+  revokedAt        DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
 
-  org              Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  user             User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User          @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@map("sessions")
   @@index([orgId], name: "idx_sessions_org_id")
   @@index([userId], name: "idx_sessions_user_id")
   @@index([expiresAt], name: "idx_sessions_expires_at")
+  @@map("sessions")
 }
 
 model AuditLog {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  userId     String?      @db.Uuid
-  action     AuditAction
-  entityType String       @db.Text
-  entityId   String       @db.Uuid
-  changes    Json
-  ipAddress  String?      @db.Text
-  userAgent  String?      @db.Text
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
+  id          String      @id @default(uuid()) @db.Uuid
+  orgId       String?     @db.Uuid
+  userId      String?     @db.Uuid
+  action      AuditAction
+  entityType  String      @db.Text
+  entityId    String      @db.Uuid
+  changes     Json
+  beforeValue Json?
+  afterValue  Json?
+  ipAddress   String?     @db.Text
+  userAgent   String?     @db.Text
+  device      String?     @db.Text
+  browser     String?     @db.Text
+  requestId   String?     @db.Text
+  targetId    String?     @db.Uuid
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  user       User?        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@map("audit_logs")
   @@index([orgId], name: "idx_audit_logs_org_id")
   @@index([entityType, entityId], name: "idx_audit_logs_entity")
+  @@map("audit_logs")
 }
 
 model Staff {
-  id                    String             @id @default(uuid()) @db.Uuid
-  orgId                 String             @db.Uuid
-  firstName             String             @db.Text
-  lastName              String             @db.Text
-  phone                 String?            @db.Text
-  email                 String?            @db.Text
-  workerType            WorkerType
-  status                StaffStatus
-  joinDate              DateTime?          @db.Timestamptz(6)
-  bankAccountNumber     String?            @db.Text
-  ifscCode              String?            @db.Text
-  upiId                 String?            @db.Text
-  preferredPaymentMethod String?           @db.Text
-  createdAt             DateTime           @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime           @updatedAt @db.Timestamptz(6)
-  deletedAt             DateTime?          @db.Timestamptz(6)
+  id                     String      @id @default(uuid()) @db.Uuid
+  orgId                  String      @db.Uuid
+  firstName              String      @db.Text
+  lastName               String      @db.Text
+  phone                  String?     @db.Text
+  email                  String?     @db.Text
+  workerType             WorkerType
+  status                 StaffStatus
+  joinDate               DateTime?   @db.Timestamptz(6)
+  bankAccountNumber      String?     @db.Text
+  ifscCode               String?     @db.Text
+  upiId                  String?     @db.Text
+  preferredPaymentMethod String?     @db.Text
+  createdAt              DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt              DateTime?   @db.Timestamptz(6)
+  deletedBy              String?     @db.Uuid
+  deleteReason           String?     @db.Text
 
-  org                   Organization       @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  documents             StaffDocument[]
-  salaryRules           SalaryRule[]
-  siteAssignments       SiteAssignment[]
-  attendanceRecords     AttendanceRecord[]
-  payRunItems           PayRunItem[]
-  payments              Payment[]
-  advances              Advance[]
-  assetAssignments      AssetAssignment[]
-  currentAssets         Asset[]
+  org               Organization       @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  documents         StaffDocument[]
+  salaryRules       SalaryRule[]
+  siteAssignments   SiteAssignment[]
+  attendanceRecords AttendanceRecord[]
+  payRunItems       PayRunItem[]
+  payments          Payment[]
+  advances          Advance[]
+  assetAssignments  AssetAssignment[]
+  currentAssets     Asset[]
 
-  @@map("staff")
-  @@index([orgId], name: "idx_staff_org_id")
   @@unique([orgId, email], name: "uq_staff_org_id_email")
   @@unique([orgId, phone], name: "uq_staff_org_id_phone")
+  @@index([orgId], name: "idx_staff_org_id")
+  @@map("staff")
 }
 
 model StaffDocument {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  staffId    String       @db.Uuid
-  type       String       @db.Text
-  fileUrl    String       @db.Text
-  expiryDate DateTime?    @db.Timestamptz(6)
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt  DateTime?    @db.Timestamptz(6)
+  id           String         @id @default(uuid()) @db.Uuid
+  orgId        String         @db.Uuid
+  staffId      String         @db.Uuid
+  type         String         @db.Text
+  status       DocumentStatus @default(PENDING)
+  fileUrl      String         @db.Text
+  expiryDate   DateTime?      @db.Timestamptz(6)
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?      @db.Timestamptz(6)
+  deletedBy    String?        @db.Uuid
+  deleteReason String?        @db.Text
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  staff      Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  staff Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("staff_documents")
   @@index([orgId], name: "idx_staff_documents_org_id")
   @@index([staffId], name: "idx_staff_documents_staff_id")
+  @@map("staff_documents")
 }
 
 model SalaryRule {
-  id                         String       @id @default(uuid()) @db.Uuid
-  orgId                      String       @db.Uuid
-  staffId                    String       @db.Uuid
+  id                         String         @id @default(uuid()) @db.Uuid
+  orgId                      String         @db.Uuid
+  staffId                    String         @db.Uuid
   rateType                   SalaryRateType
   amount                     Decimal
-  effectiveDate              DateTime     @db.Timestamptz(6)
+  effectiveDate              DateTime       @db.Timestamptz(6)
   maxAdvanceDeductionPercent Int
-  isActive                   Boolean      @default(true)
-  createdAt                  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt                  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt                  DateTime?    @db.Timestamptz(6)
+  isActive                   Boolean        @default(true)
+  createdAt                  DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt                  DateTime?      @db.Timestamptz(6)
+  deletedBy                  String?        @db.Uuid
+  deleteReason               String?        @db.Text
 
-  org                        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  staff                      Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  staff Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("salary_rules")
   @@index([orgId], name: "idx_salary_rules_org_id")
   @@index([staffId], name: "idx_salary_rules_staff_id")
+  @@map("salary_rules")
 }
 
 model Shift {
-  id              String       @id @default(uuid()) @db.Uuid
-  orgId           String       @db.Uuid
-  name            String       @db.Text
-  startTime       String       @db.Text
-  endTime         String       @db.Text
+  id              String    @id @default(uuid()) @db.Uuid
+  orgId           String    @db.Uuid
+  name            String    @db.Text
+  startTime       String    @db.Text
+  endTime         String    @db.Text
   gracePeriodMins Int
-  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?    @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime? @db.Timestamptz(6)
+  deletedBy       String?   @db.Uuid
+  deleteReason    String?   @db.Text
 
-  org             Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
-  @@map("shifts")
   @@index([orgId], name: "idx_shifts_org_id")
+  @@map("shifts")
 }
 
 model Holiday {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  date       DateTime     @db.Timestamptz(6)
-  name       String       @db.Text
-  multiplier Float
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt  DateTime?    @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  date         DateTime  @db.Timestamptz(6)
+  name         String    @db.Text
+  multiplier   Float
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
-  @@map("holidays")
   @@index([orgId], name: "idx_holidays_org_id")
   @@index([date], name: "idx_holidays_date")
+  @@map("holidays")
 }
 
 model Site {
-  id                 String            @id @default(uuid()) @db.Uuid
-  orgId              String            @db.Uuid
-  name               String            @db.Text
-  address            String?           @db.Text
-  latitude           Float?
-  longitude          Float?
-  geoFenceRadius     Int?
-  clientId           String?           @db.Uuid
-  startDate          DateTime?         @db.Timestamptz(6)
-  expectedEndDate    DateTime?         @db.Timestamptz(6)
-  status             SiteStatus
-  createdAt          DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
-  deletedAt          DateTime?         @db.Timestamptz(6)
+  id              String     @id @default(uuid()) @db.Uuid
+  orgId           String     @db.Uuid
+  name            String     @db.Text
+  address         String?    @db.Text
+  latitude        Float?
+  longitude       Float?
+  geoFenceRadius  Int?
+  clientId        String?    @db.Uuid
+  startDate       DateTime?  @db.Timestamptz(6)
+  expectedEndDate DateTime?  @db.Timestamptz(6)
+  status          SiteStatus
+  createdAt       DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?  @db.Timestamptz(6)
+  deletedBy       String?    @db.Uuid
+  deleteReason    String?    @db.Text
 
-  org                Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  client             Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  siteAssignments    SiteAssignment[]
-  attendanceRecords  AttendanceRecord[]
-  expenses           Expense[]
-  assets             Asset[]
-  materialStock      MaterialStock[]
+  org                  Organization          @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  client               Client?               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  siteAssignments      SiteAssignment[]
+  attendanceRecords    AttendanceRecord[]
+  expenses             Expense[]
+  assets               Asset[]
+  materialStock        MaterialStock[]
   materialTransactions MaterialTransaction[]
 
-  @@map("sites")
+  siteMembers SiteMember[]
+  siteHistory SiteHistory[]
+
   @@index([orgId], name: "idx_sites_org_id")
   @@index([clientId], name: "idx_sites_client_id")
+  @@map("sites")
 }
 
 model SiteAssignment {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  siteId     String       @db.Uuid
-  staffId    String       @db.Uuid
-  assignedAt DateTime     @default(now()) @db.Timestamptz(6)
-  removedAt  DateTime?    @db.Timestamptz(6)
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt  DateTime?    @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  siteId       String    @db.Uuid
+  staffId      String    @db.Uuid
+  assignedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  removedAt    DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  site       Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
-  staff      Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  site  Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  staff Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("site_assignments")
+  @@unique([siteId, staffId, assignedAt], name: "uq_site_assignments_site_staff_assigned_at")
   @@index([orgId], name: "idx_site_assignments_org_id")
   @@index([siteId], name: "idx_site_assignments_site_id")
   @@index([staffId], name: "idx_site_assignments_staff_id")
-  @@unique([siteId, staffId, assignedAt], name: "uq_site_assignments_site_staff_assigned_at")
+  @@map("site_assignments")
 }
 
 model AttendanceRecord {
-  id                String       @id @default(uuid()) @db.Uuid
-  orgId             String       @db.Uuid
-  staffId           String       @db.Uuid
-  siteId            String       @db.Uuid
-  date              DateTime     @db.Timestamptz(6)
+  id                String           @id @default(uuid()) @db.Uuid
+  orgId             String           @db.Uuid
+  staffId           String           @db.Uuid
+  siteId            String           @db.Uuid
+  date              DateTime         @db.Timestamptz(6)
   status            AttendanceStatus
-  checkInTime       DateTime?    @db.Timestamptz(6)
-  checkOutTime      DateTime?    @db.Timestamptz(6)
+  checkInTime       DateTime?        @db.Timestamptz(6)
+  checkOutTime      DateTime?        @db.Timestamptz(6)
   checkInLatitude   Float?
   checkInLongitude  Float?
   checkOutLatitude  Float?
   checkOutLongitude Float?
-  checkInPhotoUrl   String?      @db.Text
-  checkOutPhotoUrl  String?      @db.Text
+  checkInPhotoUrl   String?          @db.Text
+  checkOutPhotoUrl  String?          @db.Text
   shiftType         ShiftType
   overtimeHours     Float?
-  markedById        String?      @db.Uuid
-  notes             String?      @db.Text
-  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt         DateTime?    @db.Timestamptz(6)
+  markedById        String?          @db.Uuid
+  notes             String?          @db.Text
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?        @db.Timestamptz(6)
+  deletedBy         String?          @db.Uuid
+  deleteReason      String?          @db.Text
 
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  staff             Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  site              Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
-  markedBy          User?        @relation("AttendanceMarkedBy", fields: [markedById], references: [id], onDelete: Restrict)
+  org                Organization        @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  staff              Staff               @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  site               Site                @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  markedBy           User?               @relation("AttendanceMarkedBy", fields: [markedById], references: [id], onDelete: Restrict)
   correctionRequests CorrectionRequest[]
 
-  @@map("attendance_records")
   @@index([orgId], name: "idx_attendance_records_org_id")
   @@index([staffId], name: "idx_attendance_records_staff_id")
   @@index([siteId], name: "idx_attendance_records_site_id")
   @@index([date], name: "idx_attendance_records_date")
+  @@map("attendance_records")
 }
 
 model CorrectionRequest {
-  id                 String       @id @default(uuid()) @db.Uuid
-  orgId              String       @db.Uuid
-  attendanceRecordId String       @db.Uuid
-  requestedById      String       @db.Uuid
+  id                 String           @id @default(uuid()) @db.Uuid
+  orgId              String           @db.Uuid
+  attendanceRecordId String           @db.Uuid
+  requestedById      String           @db.Uuid
   requestedChanges   Json
-  reason             String?      @db.Text
+  reason             String?          @db.Text
   status             CorrectionStatus
-  resolvedById       String?      @db.Uuid
-  resolvedAt         DateTime?    @db.Timestamptz(6)
-  createdAt          DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt          DateTime?    @db.Timestamptz(6)
+  resolvedById       String?          @db.Uuid
+  resolvedAt         DateTime?        @db.Timestamptz(6)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  deletedAt          DateTime?        @db.Timestamptz(6)
+  deletedBy          String?          @db.Uuid
+  deleteReason       String?          @db.Text
 
-  org                Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
-  requestedBy        User        @relation("CorrectionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
-  resolvedBy         User?       @relation("CorrectionResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  org              Organization     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  requestedBy      User             @relation("CorrectionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  resolvedBy       User?            @relation("CorrectionResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
 
-  @@map("correction_requests")
   @@index([orgId], name: "idx_correction_requests_org_id")
   @@index([attendanceRecordId], name: "idx_correction_requests_attendance_record_id")
   @@index([requestedById], name: "idx_correction_requests_requested_by_id")
   @@index([resolvedById], name: "idx_correction_requests_resolved_by_id")
+  @@map("correction_requests")
 }
 
 model PayCycle {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  startDate  DateTime     @db.Timestamptz(6)
-  endDate    DateTime     @db.Timestamptz(6)
-  status     PayCycleStatus
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt  DateTime?    @db.Timestamptz(6)
+  id           String         @id @default(uuid()) @db.Uuid
+  orgId        String         @db.Uuid
+  startDate    DateTime       @db.Timestamptz(6)
+  endDate      DateTime       @db.Timestamptz(6)
+  status       PayCycleStatus
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?      @db.Timestamptz(6)
+  deletedBy    String?        @db.Uuid
+  deleteReason String?        @db.Text
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  payRuns    PayRun[]
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  payRuns PayRun[]
 
-  @@map("pay_cycles")
   @@index([orgId], name: "idx_pay_cycles_org_id")
   @@index([startDate, endDate], name: "idx_pay_cycles_period")
+  @@map("pay_cycles")
 }
 
 model PayRun {
-  id           String       @id @default(uuid()) @db.Uuid
-  orgId        String       @db.Uuid
-  payCycleId   String       @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  payCycleId   String    @db.Uuid
   totalAmount  Decimal
-  approvedById String?      @db.Uuid
-  approvedAt   DateTime?    @db.Timestamptz(6)
-  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?    @db.Timestamptz(6)
+  approvedById String?   @db.Uuid
+  approvedAt   DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  payCycle     PayCycle     @relation(fields: [payCycleId], references: [id], onDelete: Restrict)
-  approvedBy   User?        @relation("PayRunApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  payRunItems  PayRunItem[]
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  payCycle    PayCycle     @relation(fields: [payCycleId], references: [id], onDelete: Restrict)
+  approvedBy  User?        @relation("PayRunApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  payRunItems PayRunItem[]
 
-  @@map("pay_runs")
   @@index([orgId], name: "idx_pay_runs_org_id")
   @@index([payCycleId], name: "idx_pay_runs_pay_cycle_id")
   @@index([approvedById], name: "idx_pay_runs_approved_by_id")
+  @@map("pay_runs")
 }
 
 model PayRunItem {
-  id             String       @id @default(uuid()) @db.Uuid
-  orgId          String       @db.Uuid
-  payRunId       String       @db.Uuid
-  staffId        String       @db.Uuid
-  grossPay       Decimal
-  deductions     Json
-  additions      Json
-  arrears        Json
-  netPay         Decimal
-  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt      DateTime?    @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  payRunId     String    @db.Uuid
+  staffId      String    @db.Uuid
+  grossPay     Decimal
+  deductions   Json
+  additions    Json
+  arrears      Json
+  netPay       Decimal
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org            Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  payRun         PayRun       @relation(fields: [payRunId], references: [id], onDelete: Restrict)
-  staff          Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  payRun PayRun       @relation(fields: [payRunId], references: [id], onDelete: Restrict)
+  staff  Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("pay_run_items")
   @@index([orgId], name: "idx_pay_run_items_org_id")
   @@index([payRunId], name: "idx_pay_run_items_pay_run_id")
   @@index([staffId], name: "idx_pay_run_items_staff_id")
+  @@map("pay_run_items")
 }
 
 model Payment {
-  id               String       @id @default(uuid()) @db.Uuid
-  orgId            String       @db.Uuid
-  staffId          String       @db.Uuid
-  amount           Decimal
-  mode             PaymentMode
-  referenceId      String?      @db.Text
-  status           PaymentStatus
-  approvedById     String?      @db.Uuid
-  approvedAt       DateTime?    @db.Timestamptz(6)
-  failureReason    String?      @db.Text
-  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt        DateTime?    @db.Timestamptz(6)
+  id            String        @id @default(uuid()) @db.Uuid
+  orgId         String        @db.Uuid
+  staffId       String        @db.Uuid
+  amount        Decimal
+  mode          PaymentMode
+  referenceId   String?       @db.Text
+  status        PaymentStatus
+  approvedById  String?       @db.Uuid
+  approvedAt    DateTime?     @db.Timestamptz(6)
+  failureReason String?       @db.Text
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?     @db.Timestamptz(6)
+  deletedBy     String?       @db.Uuid
+  deleteReason  String?       @db.Text
 
-  org              Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  approvedBy       User?        @relation("PaymentApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  org              Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  staff            Staff             @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  approvedBy       User?             @relation("PaymentApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   paymentApprovals PaymentApproval[]
 
-  @@map("payments")
   @@index([orgId], name: "idx_payments_org_id")
   @@index([staffId], name: "idx_payments_staff_id")
   @@index([approvedById], name: "idx_payments_approved_by_id")
+  @@map("payments")
 }
 
 model PaymentApproval {
-  id         String       @id @default(uuid()) @db.Uuid
-  orgId      String       @db.Uuid
-  paymentId  String       @db.Uuid
-  action     PaymentApprovalAction
-  actorId    String       @db.Uuid
-  notes      String?      @db.Text
-  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt  DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt  DateTime?    @db.Timestamptz(6)
+  id           String                @id @default(uuid()) @db.Uuid
+  orgId        String                @db.Uuid
+  paymentId    String                @db.Uuid
+  action       PaymentApprovalAction
+  actorId      String                @db.Uuid
+  notes        String?               @db.Text
+  createdAt    DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime              @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?             @db.Timestamptz(6)
+  deletedBy    String?               @db.Uuid
+  deleteReason String?               @db.Text
 
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  payment    Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  actor      User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  payment Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  actor   User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
-  @@map("payment_approvals")
   @@index([orgId], name: "idx_payment_approvals_org_id")
   @@index([paymentId], name: "idx_payment_approvals_payment_id")
   @@index([actorId], name: "idx_payment_approvals_actor_id")
+  @@map("payment_approvals")
 }
 
 model Advance {
-  id                String       @id @default(uuid()) @db.Uuid
-  orgId             String       @db.Uuid
-  staffId           String       @db.Uuid
+  id                String        @id @default(uuid()) @db.Uuid
+  orgId             String        @db.Uuid
+  staffId           String        @db.Uuid
   amount            Decimal
   status            AdvanceStatus
-  requestedAt       DateTime?    @db.Timestamptz(6)
-  approvedAt        DateTime?    @db.Timestamptz(6)
-  disbursedAt       DateTime?    @db.Timestamptz(6)
-  deductedAt        DateTime?    @db.Timestamptz(6)
-  linkedDeductionId String?      @db.Uuid
-  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt         DateTime?    @db.Timestamptz(6)
+  requestedAt       DateTime?     @db.Timestamptz(6)
+  approvedAt        DateTime?     @db.Timestamptz(6)
+  disbursedAt       DateTime?     @db.Timestamptz(6)
+  deductedAt        DateTime?     @db.Timestamptz(6)
+  linkedDeductionId String?       @db.Uuid
+  createdAt         DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?     @db.Timestamptz(6)
+  deletedBy         String?       @db.Uuid
+  deleteReason      String?       @db.Text
 
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  staff             Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  staff Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("advances")
   @@index([orgId], name: "idx_advances_org_id")
   @@index([staffId], name: "idx_advances_staff_id")
+  @@map("advances")
 }
 
 model Expense {
-  id            String       @id @default(uuid()) @db.Uuid
-  orgId         String       @db.Uuid
+  id            String        @id @default(uuid()) @db.Uuid
+  orgId         String        @db.Uuid
   amount        Decimal
-  category      String       @db.Text
-  date          DateTime     @db.Timestamptz(6)
-  siteId        String?      @db.Uuid
-  paidById      String?      @db.Uuid
-  paymentMethod String       @db.Text
+  category      String        @db.Text
+  date          DateTime      @db.Timestamptz(6)
+  siteId        String?       @db.Uuid
+  paidById      String?       @db.Uuid
+  paymentMethod String        @db.Text
   status        ExpenseStatus
-  receiptUrl    String?      @db.Text
-  notes         String?      @db.Text
-  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt     DateTime?    @db.Timestamptz(6)
+  receiptUrl    String?       @db.Text
+  notes         String?       @db.Text
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?     @db.Timestamptz(6)
+  deletedBy     String?       @db.Uuid
+  deleteReason  String?       @db.Text
 
-  org           Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  site          Site?        @relation(fields: [siteId], references: [id], onDelete: Restrict)
-  paidBy        User?        @relation(fields: [paidById], references: [id], onDelete: Restrict)
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  site   Site?        @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  paidBy User?        @relation(fields: [paidById], references: [id], onDelete: Restrict)
 
-  @@map("expenses")
   @@index([orgId], name: "idx_expenses_org_id")
   @@index([siteId], name: "idx_expenses_site_id")
   @@index([paidById], name: "idx_expenses_paid_by_id")
+  @@map("expenses")
 }
 
 model Asset {
-  id                String       @id @default(uuid()) @db.Uuid
-  orgId             String       @db.Uuid
-  name              String       @db.Text
-  category          String       @db.Text
-  serialNumber      String?      @db.Text
-  purchaseDate      DateTime?    @db.Timestamptz(6)
-  purchaseCost      Decimal?
-  condition         String       @db.Text
-  currentLocation   String?      @db.Text
-  currentSiteId     String?      @db.Uuid
-  currentWorkerId   String?      @db.Uuid
-  status            AssetCondition
-  photoUrl          String?      @db.Text
-  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt         DateTime?    @db.Timestamptz(6)
+  id              String         @id @default(uuid()) @db.Uuid
+  orgId           String         @db.Uuid
+  name            String         @db.Text
+  category        String         @db.Text
+  serialNumber    String?        @db.Text
+  purchaseDate    DateTime?      @db.Timestamptz(6)
+  purchaseCost    Decimal?
+  condition       String         @db.Text
+  currentLocation String?        @db.Text
+  currentSiteId   String?        @db.Uuid
+  currentWorkerId String?        @db.Uuid
+  status          AssetCondition
+  photoUrl        String?        @db.Text
+  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?      @db.Timestamptz(6)
+  deletedBy       String?        @db.Uuid
+  deleteReason    String?        @db.Text
 
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  currentSite       Site?        @relation(fields: [currentSiteId], references: [id], onDelete: Restrict)
-  currentWorker     Staff?       @relation(fields: [currentWorkerId], references: [id], onDelete: Restrict)
-  assetAssignments  AssetAssignment[]
+  org              Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  currentSite      Site?             @relation(fields: [currentSiteId], references: [id], onDelete: Restrict)
+  currentWorker    Staff?            @relation(fields: [currentWorkerId], references: [id], onDelete: Restrict)
+  assetAssignments AssetAssignment[]
 
-  @@map("assets")
   @@index([orgId], name: "idx_assets_org_id")
   @@index([currentSiteId], name: "idx_assets_current_site_id")
   @@index([currentWorkerId], name: "idx_assets_current_worker_id")
+  @@map("assets")
 }
 
 model AssetAssignment {
-  id             String       @id @default(uuid()) @db.Uuid
-  orgId          String       @db.Uuid
-  assetId        String       @db.Uuid
-  staffId        String       @db.Uuid
-  issuedAt       DateTime     @default(now()) @db.Timestamptz(6)
-  returnedAt     DateTime?    @db.Timestamptz(6)
-  conditionNotes String?      @db.Text
-  photoUrl       String?      @db.Text
-  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt      DateTime?    @db.Timestamptz(6)
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @db.Uuid
+  assetId        String    @db.Uuid
+  staffId        String    @db.Uuid
+  issuedAt       DateTime  @default(now()) @db.Timestamptz(6)
+  returnedAt     DateTime? @db.Timestamptz(6)
+  conditionNotes String?   @db.Text
+  photoUrl       String?   @db.Text
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime? @db.Timestamptz(6)
+  deletedBy      String?   @db.Uuid
+  deleteReason   String?   @db.Text
 
-  org            Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  asset          Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  staff          Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  asset Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  staff Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
 
-  @@map("asset_assignments")
   @@index([orgId], name: "idx_asset_assignments_org_id")
   @@index([assetId], name: "idx_asset_assignments_asset_id")
   @@index([staffId], name: "idx_asset_assignments_staff_id")
+  @@map("asset_assignments")
 }
 
 model Material {
-  id                   String       @id @default(uuid()) @db.Uuid
-  orgId                String       @db.Uuid
-  name                 String       @db.Text
-  category             String       @db.Text
-  unit                 String       @db.Text
-  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?    @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  name         String    @db.Text
+  category     String    @db.Text
+  unit         String    @db.Text
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org                  Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  org                  Organization          @relation(fields: [orgId], references: [id], onDelete: Restrict)
   materialStock        MaterialStock[]
   materialTransactions MaterialTransaction[]
 
-  @@map("materials")
   @@index([orgId], name: "idx_materials_org_id")
+  @@map("materials")
 }
 
 model MaterialStock {
-  id              String       @id @default(uuid()) @db.Uuid
-  orgId           String       @db.Uuid
-  materialId      String       @db.Uuid
-  siteId          String       @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  orgId           String    @db.Uuid
+  materialId      String    @db.Uuid
+  siteId          String    @db.Uuid
   currentQuantity Decimal
   reorderLevel    Decimal
-  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?    @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime? @db.Timestamptz(6)
+  deletedBy       String?   @db.Uuid
+  deleteReason    String?   @db.Text
 
-  org             Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  material        Material     @relation(fields: [materialId], references: [id], onDelete: Restrict)
-  site            Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  material Material     @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  site     Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
 
-  @@map("material_stock")
+  @@unique([materialId, siteId], name: "uq_material_stock_material_site")
   @@index([orgId], name: "idx_material_stock_org_id")
   @@index([materialId], name: "idx_material_stock_material_id")
   @@index([siteId], name: "idx_material_stock_site_id")
-  @@unique([materialId, siteId], name: "uq_material_stock_material_site")
+  @@map("material_stock")
 }
 
 model MaterialTransaction {
-  id              String       @id @default(uuid()) @db.Uuid
-  orgId           String       @db.Uuid
-  materialId      String       @db.Uuid
-  siteId          String       @db.Uuid
-  type            MaterialTransactionType
-  quantity        Decimal
-  date            DateTime     @db.Timestamptz(6)
-  vendorId        String?      @db.Uuid
-  notes           String?      @db.Text
-  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?    @db.Timestamptz(6)
+  id           String                  @id @default(uuid()) @db.Uuid
+  orgId        String                  @db.Uuid
+  materialId   String                  @db.Uuid
+  siteId       String                  @db.Uuid
+  type         MaterialTransactionType
+  quantity     Decimal
+  date         DateTime                @db.Timestamptz(6)
+  vendorId     String?                 @db.Uuid
+  notes        String?                 @db.Text
+  createdAt    DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime                @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?               @db.Timestamptz(6)
+  deletedBy    String?                 @db.Uuid
+  deleteReason String?                 @db.Text
 
-  org             Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  material        Material     @relation(fields: [materialId], references: [id], onDelete: Restrict)
-  site            Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
-  vendor          Vendor?      @relation(fields: [vendorId], references: [id], onDelete: Restrict)
-  vendorPayments   VendorPayment[]
+  org            Organization    @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  material       Material        @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  site           Site            @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  vendor         Vendor?         @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  vendorPayments VendorPayment[]
 
-  @@map("material_transactions")
   @@index([orgId], name: "idx_material_transactions_org_id")
   @@index([materialId], name: "idx_material_transactions_material_id")
   @@index([siteId], name: "idx_material_transactions_site_id")
   @@index([vendorId], name: "idx_material_transactions_vendor_id")
+  @@map("material_transactions")
 }
 
 model Client {
-  id             String       @id @default(uuid()) @db.Uuid
-  orgId          String       @db.Uuid
-  name           String       @db.Text
-  contactName    String?      @db.Text
-  contactEmail   String?      @db.Text
-  contactPhone   String?      @db.Text
-  gstin          String?      @db.Text
-  billingAddress String?      @db.Text
-  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt      DateTime?    @db.Timestamptz(6)
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @db.Uuid
+  name           String    @db.Text
+  contactName    String?   @db.Text
+  contactEmail   String?   @db.Text
+  contactPhone   String?   @db.Text
+  gstin          String?   @db.Text
+  billingAddress String?   @db.Text
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime? @db.Timestamptz(6)
+  deletedBy      String?   @db.Uuid
+  deleteReason   String?   @db.Text
 
-  org            Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  sites          Site[]
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  sites Site[]
 
-  @@map("clients")
   @@index([orgId], name: "idx_clients_org_id")
+  @@map("clients")
 }
 
 model Vendor {
-  id                  String       @id @default(uuid()) @db.Uuid
-  orgId               String       @db.Uuid
-  name                String       @db.Text
-  contactName         String?      @db.Text
-  contactEmail        String?      @db.Text
-  contactPhone        String?      @db.Text
-  gstin               String?      @db.Text
-  bankAccountNumber   String?      @db.Text
-  ifscCode            String?      @db.Text
-  paymentDetails      Json?
-  createdAt           DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt           DateTime?    @db.Timestamptz(6)
+  id                String    @id @default(uuid()) @db.Uuid
+  orgId             String    @db.Uuid
+  name              String    @db.Text
+  contactName       String?   @db.Text
+  contactEmail      String?   @db.Text
+  contactPhone      String?   @db.Text
+  gstin             String?   @db.Text
+  bankAccountNumber String?   @db.Text
+  ifscCode          String?   @db.Text
+  paymentDetails    Json?
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime? @db.Timestamptz(6)
+  deletedBy         String?   @db.Uuid
+  deleteReason      String?   @db.Text
 
-  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  vendorPayments      VendorPayment[]
+  org                  Organization          @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  vendorPayments       VendorPayment[]
   materialTransactions MaterialTransaction[]
 
-  @@map("vendors")
   @@index([orgId], name: "idx_vendors_org_id")
+  @@map("vendors")
 }
 
 model VendorPayment {
-  id                    String       @id @default(uuid()) @db.Uuid
-  orgId                 String       @db.Uuid
-  vendorId              String       @db.Uuid
+  id                    String    @id @default(uuid()) @db.Uuid
+  orgId                 String    @db.Uuid
+  vendorId              String    @db.Uuid
   amount                Decimal
-  date                  DateTime     @db.Timestamptz(6)
-  reference             String?      @db.Text
-  materialTransactionId String?      @db.Uuid
-  notes                 String?      @db.Text
-  createdAt             DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt             DateTime?    @db.Timestamptz(6)
+  date                  DateTime  @db.Timestamptz(6)
+  reference             String?   @db.Text
+  materialTransactionId String?   @db.Uuid
+  notes                 String?   @db.Text
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt             DateTime? @db.Timestamptz(6)
+  deletedBy             String?   @db.Uuid
+  deleteReason          String?   @db.Text
 
-  org                   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  vendor                Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
-  materialTransaction   MaterialTransaction? @relation(fields: [materialTransactionId], references: [id], onDelete: Restrict)
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  vendor              Vendor               @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  materialTransaction MaterialTransaction? @relation(fields: [materialTransactionId], references: [id], onDelete: Restrict)
 
-  @@map("vendor_payments")
   @@index([orgId], name: "idx_vendor_payments_org_id")
   @@index([vendorId], name: "idx_vendor_payments_vendor_id")
   @@index([materialTransactionId], name: "idx_vendor_payments_material_transaction_id")
+  @@map("vendor_payments")
 }
 
 model Notification {
-  id        String       @id @default(uuid()) @db.Uuid
-  orgId     String       @db.Uuid
-  userId    String?      @db.Uuid
-  title     String       @db.Text
-  body      String       @db.Text
-  type      String       @db.Text
-  deepLink  String?      @db.Text
-  readAt    DateTime?    @db.Timestamptz(6)
-  createdAt DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt DateTime?    @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  userId       String?   @db.Uuid
+  title        String    @db.Text
+  body         String    @db.Text
+  type         String    @db.Text
+  deepLink     String?   @db.Text
+  readAt       DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
 
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  user      User?        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@map("notifications")
   @@index([orgId], name: "idx_notifications_org_id")
   @@index([userId], name: "idx_notifications_user_id")
+  @@map("notifications")
 }
 
 model SyncQueue {
-  id                 String       @id @default(uuid()) @db.Uuid
-  orgId              String       @db.Uuid
-  userId             String?      @db.Uuid
-  operationType      String       @db.Text
-  tableName          String       @db.Text
+  id                 String     @id @default(uuid()) @db.Uuid
+  orgId              String     @db.Uuid
+  userId             String?    @db.Uuid
+  operationType      String     @db.Text
+  tableName          String     @db.Text
   payload            Json
   status             SyncStatus
   conflictResolution Json?
-  localId            String?      @db.Uuid
-  serverId           String?      @db.Uuid
-  version            Int          @default(1)
-  createdAt          DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt          DateTime?    @db.Timestamptz(6)
+  localId            String?    @db.Uuid
+  serverId           String?    @db.Uuid
+  version            Int        @default(1)
+  createdAt          DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt          DateTime?  @db.Timestamptz(6)
+  deletedBy          String?    @db.Uuid
+  deleteReason       String?    @db.Text
 
-  org                Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  user               User?        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@map("sync_queue")
   @@index([orgId], name: "idx_sync_queue_org_id")
   @@index([userId], name: "idx_sync_queue_user_id")
+  @@map("sync_queue")
+}
+
+model CompanySettings {
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @unique @db.Uuid
+  theme            String   @default("light") @db.Text
+  language         String   @default("en") @db.Text
+  timezone         String   @default("UTC") @db.Text
+  currency         String   @default("INR") @db.Text
+  workingDays      Json?
+  attendancePolicy Json?
+  payrollPolicy    Json?
+  featureFlags     Json?
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@map("company_settings")
+}
+
+model CompanyJoinRequest {
+  id           String        @id @default(uuid()) @db.Uuid
+  orgId        String        @db.Uuid
+  userId       String        @db.Uuid
+  status       RequestStatus @default(PENDING)
+  resolvedById String?       @db.Uuid
+  resolvedAt   DateTime?     @db.Timestamptz(6)
+  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?     @db.Timestamptz(6)
+  deletedBy    String?       @db.Uuid
+  deleteReason String?       @db.Text
+
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([orgId], name: "idx_join_req_org_id")
+  @@index([userId], name: "idx_join_req_user_id")
+  @@map("company_join_requests")
+}
+
+model PromotionRequest {
+  id            String        @id @default(uuid()) @db.Uuid
+  orgId         String        @db.Uuid
+  userId        String        @db.Uuid
+  requestedRole UserRole
+  reason        String?       @db.Text
+  status        RequestStatus @default(PENDING)
+  resolvedById  String?       @db.Uuid
+  resolvedAt    DateTime?     @db.Timestamptz(6)
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?     @db.Timestamptz(6)
+  deletedBy     String?       @db.Uuid
+  deleteReason  String?       @db.Text
+
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([orgId], name: "idx_promo_req_org_id")
+  @@index([userId], name: "idx_promo_req_user_id")
+  @@map("promotion_requests")
+}
+
+model OwnerRequest {
+  id                      String        @id @default(uuid()) @db.Uuid
+  userId                  String        @db.Uuid
+  companyName             String        @db.Text
+  companyAddress          String?       @db.Text
+  gstin                   String?       @db.Text
+  businessRegistrationUrl String?       @db.Text
+  identityProofUrl        String?       @db.Text
+  status                  RequestStatus @default(PENDING)
+  resolvedById            String?       @db.Uuid
+  resolvedAt              DateTime?     @db.Timestamptz(6)
+  createdAt               DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt               DateTime?     @db.Timestamptz(6)
+  deletedBy               String?       @db.Uuid
+  deleteReason            String?       @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId], name: "idx_owner_req_user_id")
+  @@map("owner_requests")
+}
+
+model Invitation {
+  id           String           @id @default(uuid()) @db.Uuid
+  orgId        String           @db.Uuid
+  email        String           @db.Text
+  role         UserRole
+  status       InvitationStatus @default(PENDING)
+  expiresAt    DateTime         @db.Timestamptz(6)
+  acceptedAt   DateTime?        @db.Timestamptz(6)
+  invitedById  String           @db.Uuid
+  createdAt    DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?        @db.Timestamptz(6)
+  deletedBy    String?          @db.Uuid
+  deleteReason String?          @db.Text
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  invitedBy User         @relation(fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([orgId], name: "idx_invitations_org_id")
+  @@index([email], name: "idx_invitations_email")
+  @@map("invitations")
+}
+
+model SiteMember {
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  siteId       String    @db.Uuid
+  userId       String    @db.Uuid
+  role         SiteRole  @default(WORKER)
+  assignedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  removedAt    DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedBy    String?   @db.Uuid
+  deleteReason String?   @db.Text
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  site Site         @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  user User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([orgId], name: "idx_sitemembers_org_id")
+  @@index([siteId], name: "idx_sitemembers_site_id")
+  @@index([userId], name: "idx_sitemembers_user_id")
+  @@map("site_members")
+}
+
+model SiteHistory {
+  id          String      @id @default(uuid()) @db.Uuid
+  siteId      String      @db.Uuid
+  oldStatus   SiteStatus?
+  newStatus   SiteStatus
+  reason      String?     @db.Text
+  changedById String?     @db.Uuid
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+
+  site      Site  @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  changedBy User? @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([siteId], name: "idx_site_history_site_id")
+  @@map("site_history")
 }

@@ -44,7 +44,7 @@ class RolePermissionManager {
       AppPermission.managePayroll,
       AppPermission.viewPayroll,
     },
-    UserRole.companyOwner: {
+    UserRole.owner: {
       AppPermission.viewOwnerDashboard,
       AppPermission.manageSites,
       AppPermission.viewSites,
@@ -55,7 +55,7 @@ class RolePermissionManager {
       AppPermission.managePayroll,
       AppPermission.viewPayroll,
     },
-    UserRole.siteManager: {
+    UserRole.admin: {
       AppPermission.viewSiteManagerDashboard,
       AppPermission.manageSites,
       AppPermission.viewSites,
@@ -71,7 +71,7 @@ class RolePermissionManager {
       AppPermission.manageAttendance,
       AppPermission.viewAttendance,
     },
-    UserRole.worker: {
+    UserRole.staff: {
       AppPermission.viewWorkerDashboard,
       AppPermission.logOwnAttendance,
       AppPermission.viewOwnPayroll,

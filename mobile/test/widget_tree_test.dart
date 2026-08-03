@@ -14,9 +14,29 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
       status: AuthStatus.authenticated,
       isInitializing: false,
       hasSeenOnboarding: true,
-      user: User(id: '1', email: 'worker@test.com', role: UserRole.worker, name: 'Worker'),
+      user: User(id: '1', email: 'worker@test.com', role: UserRole.staff, name: 'Worker'),
     );
   }
+
+  @override
+  Future<bool> requestDeleteAccountOtp(String password) async {
+    return true;
+  }
+
+  @override
+  Future<void> fetchMe() async {}
+
+  @override
+  Future<bool> verifyDeleteAccountOtp(String otp) async {
+    return true;
+  }
+
+  @override
+  Future<bool> deleteAccount(String otp) async {
+    state = const AuthState(status: AuthStatus.unauthenticated, isInitializing: false);
+    return true;
+  }
+
   @override
   Future<void> checkAuthStatus() async {}
   @override
@@ -37,8 +57,6 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
   Future<bool> resetPasswordComplete(String email, String otp, String newPassword) async => true;
   @override
   Future<void> signOut() async {}
-  @override
-  Future<void> deleteAccount() async {}
   @override
   Future<void> updateUser(User user) async {}
 }
