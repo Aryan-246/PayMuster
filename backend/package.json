@@ -17,8 +17,9 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.16.0",
     "@prisma/adapter-pg": "^7.9.1",
-    "@prisma/client": "^7.9.1",
+    "@prisma/client-runtime-utils": "7.9.1",
     "bcryptjs": "^3.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -27,17 +28,18 @@
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^9.0.3",
     "pg": "^8.22.0",
-    "prisma": "^7.9.1",
     "supabase": "^2.110.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@prisma/client": "7.9.1",
     "@types/bcryptjs": "^2.1.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.0",
     "@types/node": "^26.1.2",
     "@types/nodemailer": "^8.0.1",
+    "prisma": "^7.9.1",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2"
   }

@@ -30,18 +30,22 @@ class AuthController extends Notifier<AuthState> {
   AuthState build() {
     Future.microtask(() async {
       if (kIsWeb) {
-        try {
-          await GoogleSignIn.instance.initialize(
-            clientId: Env.googleWebClientId.isNotEmpty
-                ? Env.googleWebClientId
-                : Env.googleAndroidClientId,
-          );
-        } catch (_) {}
+        unawaited(_initializeGoogleSignIn());
       }
       await checkAuthStatus();
     });
 
     return const AuthState();
+  }
+
+  Future<void> _initializeGoogleSignIn() async {
+    try {
+      await GoogleSignIn.instance.initialize(
+        clientId: Env.googleWebClientId.isNotEmpty
+            ? Env.googleWebClientId
+            : Env.googleAndroidClientId,
+      );
+    } catch (_) {}
   }
 
   /// Restores auth session and onboarding state from SharedPreferences.
@@ -82,12 +86,14 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  /// Mark onboarding as completed.
-  void markOnboardingSeen() {
+  /// Persist onboarding completion before publishing the new routing state.
+  Future<void> markOnboardingSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    final wasSaved = await prefs.setBool('has_seen_onboarding', true);
+    if (!wasSaved) {
+      throw StateError('Unable to save onboarding completion.');
+    }
     state = state.copyWith(hasSeenOnboarding: true);
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool('has_seen_onboarding', true);
-    });
   }
 
   Future<bool> signIn(String email, String password) async {
@@ -142,10 +148,9 @@ class AuthController extends Notifier<AuthState> {
       final repository = ref.read(authProvider);
       await repository.verifyEmail(email, otp);
       // Verification succeeded — navigate to login
-      state = state.copyWith(
-        status: AuthStatus.unauthenticated,
-        errorMessage: null,
-      ).clearPending();
+      state = state
+          .copyWith(status: AuthStatus.unauthenticated, errorMessage: null)
+          .clearPending();
       return true;
     } catch (e) {
       state = state.copyWith(
@@ -163,9 +168,7 @@ class AuthController extends Notifier<AuthState> {
       await repository.resendVerification(email);
       return true;
     } catch (e) {
-      state = state.copyWith(
-        errorMessage: _cleanErrorMessage(e),
-      );
+      state = state.copyWith(errorMessage: _cleanErrorMessage(e));
       return false;
     }
   }
@@ -190,15 +193,17 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  Future<bool> resetPasswordComplete(String email, String otp, String newPassword) async {
+  Future<bool> resetPasswordComplete(
+    String email,
+    String otp,
+    String newPassword,
+  ) async {
     state = state.copyWith(status: AuthStatus.loading, errorMessage: null);
     try {
       final repository = ref.read(authProvider);
       await repository.resetPasswordWithOtp(email, otp, newPassword);
       // Password reset succeeded — navigate to login
-      state = state.copyWith(
-        status: AuthStatus.unauthenticated,
-      ).clearPending();
+      state = state.copyWith(status: AuthStatus.unauthenticated).clearPending();
       return true;
     } catch (e) {
       state = state.copyWith(
@@ -251,9 +256,7 @@ class AuthController extends Notifier<AuthState> {
       await repository.requestDeleteAccountOtp(password);
       return true;
     } catch (e) {
-      state = state.copyWith(
-        errorMessage: _cleanErrorMessage(e),
-      );
+      state = state.copyWith(errorMessage: _cleanErrorMessage(e));
       return false;
     }
   }
@@ -265,9 +268,7 @@ class AuthController extends Notifier<AuthState> {
       await repository.verifyDeleteAccountOtp(otp);
       return true;
     } catch (e) {
-      state = state.copyWith(
-        errorMessage: _cleanErrorMessage(e),
-      );
+      state = state.copyWith(errorMessage: _cleanErrorMessage(e));
       return false;
     }
   }
@@ -284,20 +285,19 @@ class AuthController extends Notifier<AuthState> {
       );
       return true;
     } catch (e) {
-      state = state.copyWith(
-        errorMessage: _cleanErrorMessage(e),
-      );
+      state = state.copyWith(errorMessage: _cleanErrorMessage(e));
       return false;
     }
   }
 
-  Future<void> fetchMe() async {
+  Future<User?> fetchMe() async {
     try {
       final repository = ref.read(authProvider);
       final user = await repository.fetchMe();
-      state = state.copyWith(user: user);
+      state = state.copyWith(user: user, errorMessage: null);
+      return user;
     } catch (e) {
-      // Ignore background fetch error
+      return null;
     }
   }
 
@@ -307,14 +307,11 @@ class AuthController extends Notifier<AuthState> {
       await repository.updateUser(user);
       state = state.copyWith(user: user, errorMessage: null);
     } catch (e) {
-      state = state.copyWith(
-        errorMessage: _cleanErrorMessage(e),
-      );
+      state = state.copyWith(errorMessage: _cleanErrorMessage(e));
     }
   }
 }
 
-final authControllerProvider =
-    NotifierProvider<AuthController, AuthState>(() {
+final authControllerProvider = NotifierProvider<AuthController, AuthState>(() {
   return AuthController();
 });

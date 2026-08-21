@@ -1,11 +1,44 @@
 import { z } from 'zod';
 
-export const createSiteSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters long"),
-  address: z.string().optional(),
-});
+export const siteStatusSchema = z.enum([
+  'DRAFT',
+  'PENDING',
+  'ACTIVE',
+  'SUSPENDED',
+  'ARCHIVED',
+  'DELETED',
+]);
 
-export const updateSiteStatusSchema = z.object({
-  status: z.enum(['DRAFT', 'PENDING', 'ACTIVE', 'SUSPENDED', 'ARCHIVED', 'DELETED']),
-  reason: z.string().optional(),
-});
+export const siteRoleSchema = z.enum([
+  'MANAGER',
+  'SUPERVISOR',
+  'WORKER',
+  'GUEST',
+]);
+
+export const createSiteSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    address: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+export const updateSiteStatusSchema = z
+  .object({
+    status: siteStatusSchema,
+    reason: z.string().trim().min(2).max(500).optional(),
+  })
+  .strict();
+
+export const assignSiteMemberSchema = z
+  .object({
+    userId: z.string().uuid(),
+    role: siteRoleSchema,
+  })
+  .strict();
+
+export const listSitesQuerySchema = z
+  .object({
+    status: siteStatusSchema.optional(),
+  })
+  .strict();

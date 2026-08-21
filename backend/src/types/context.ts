@@ -4,6 +4,7 @@ export interface AppContext {
     id: string;
     email: string;
     role: string;
+    orgId: string | null;
   };
   tenant?: {
     companyId?: string;

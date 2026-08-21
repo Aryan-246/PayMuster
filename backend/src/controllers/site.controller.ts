@@ -19,7 +19,7 @@ export class SiteController {
 
   async getSites(req: Request, res: Response) {
     const orgId = req.context.tenant!.companyId!;
-    const status = req.query.status as SiteStatus;
+    const { status } = res.locals.validatedQuery as { status?: SiteStatus };
 
     const sites = await siteService.getSites(orgId, status);
 

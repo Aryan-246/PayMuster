@@ -107,7 +107,7 @@ class StaffListScreen extends ConsumerWidget {
       itemBuilder: (context, index) {
         final worker = workers[index];
         return GestureDetector(
-          onTap: () => context.push('/app/sites/${worker.id}'),
+          onTap: () => context.push('/app/workers/${worker.id}'),
           child: PMCard.standard(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,

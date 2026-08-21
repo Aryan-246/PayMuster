@@ -8,13 +8,18 @@ abstract class AuthProviderBase {
   Future<User> signInWithGoogle();
   Future<User> signInWithApple();
   Future<void> signOut();
+  Future<bool> refreshAccessToken();
   Future<void> requestDeleteAccountOtp(String password);
   Future<void> verifyDeleteAccountOtp(String otp);
   Future<void> deleteAccount(String otp);
   Future<void> resetPassword(String email);
   Future<void> verifyEmail(String email, String otp);
   Future<void> resendVerification(String email);
-  Future<void> resetPasswordWithOtp(String email, String otp, String newPassword);
+  Future<void> resetPasswordWithOtp(
+    String email,
+    String otp,
+    String newPassword,
+  );
   Future<User?> getCurrentUser();
   Future<User> fetchMe();
   Future<String?> getAccessToken();

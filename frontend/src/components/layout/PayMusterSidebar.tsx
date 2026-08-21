@@ -5,7 +5,9 @@ const items = [
   { key: 'nav.overview', icon: '◉', active: true },
   { key: 'nav.workforce', icon: '◌' },
   { key: 'nav.sites', icon: '◍' },
+  { key: 'nav.attendance', icon: '◎' },
   { key: 'nav.payroll', icon: '◈' },
+  { key: 'nav.ownerRequests', icon: '◇' },
   { key: 'nav.ai', icon: '✦' },
 ];
 

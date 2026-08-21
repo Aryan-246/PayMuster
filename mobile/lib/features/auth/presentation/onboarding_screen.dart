@@ -13,29 +13,46 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+  bool _isCompleting = false;
 
   final List<_OnboardingPage> _pages = [
     _OnboardingPage(
       title: 'Construction Management\nReimagined',
-      description: 'Track your workforce, manage sites, and handle payroll all from your pocket.',
+      description:
+          'Track your workforce, manage sites, and handle payroll all from your pocket.',
       icon: Icons.domain,
     ),
     _OnboardingPage(
       title: 'Real-time\nWorkforce Tracking',
-      description: 'Know exactly who is on site and when. Live roll calls and attendance tracking.',
+      description:
+          'Know exactly who is on site and when. Live roll calls and attendance tracking.',
       icon: Icons.groups,
     ),
     _OnboardingPage(
       title: 'Automated\nPayroll System',
-      description: 'Seamless integration with attendance ensures accurate and timely payments.',
+      description:
+          'Seamless integration with attendance ensures accurate and timely payments.',
       icon: Icons.account_balance_wallet,
     ),
   ];
 
-  void _completeOnboarding() {
-    // Update auth state; the GoRouter redirect will automatically
-    // navigate to /welcome once hasSeenOnboarding becomes true.
-    ref.read(authControllerProvider.notifier).markOnboardingSeen();
+  Future<void> _completeOnboarding() async {
+    if (_isCompleting) return;
+
+    setState(() => _isCompleting = true);
+    try {
+      await ref.read(authControllerProvider.notifier).markOnboardingSeen();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isCompleting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not save onboarding progress. Please try again.',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -43,8 +60,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : PMColors.textPrimaryLight;
-    final descColor = isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
-    
+    final descColor = isDark
+        ? PMColors.textSecondaryDark
+        : PMColors.textSecondaryLight;
+
     return Scaffold(
       body: Stack(
         children: [
@@ -68,7 +87,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     const SizedBox(height: 48),
                     Text(
                       page.title,
-                      style: PMTypography.displayLarge.copyWith(color: textColor),
+                      style: PMTypography.displayLarge.copyWith(
+                        color: textColor,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Text(
@@ -105,16 +126,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   ),
                 ),
                 FloatingActionButton(
-                  onPressed: () {
-                    if (_currentPage == _pages.length - 1) {
-                      _completeOnboarding();
-                    } else {
-                      _pageController.nextPage(
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                      );
-                    }
-                  },
+                  onPressed: _isCompleting
+                      ? null
+                      : () {
+                          if (_currentPage == _pages.length - 1) {
+                            _completeOnboarding();
+                          } else {
+                            _pageController.nextPage(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeInOut,
+                            );
+                          }
+                        },
                   backgroundColor: PMColors.brandPrimaryDark,
                   child: Icon(
                     _currentPage == _pages.length - 1

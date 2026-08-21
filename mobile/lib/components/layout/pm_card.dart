@@ -7,7 +7,8 @@ class PMCard extends StatelessWidget {
   final Widget child;
   final PMCardTier tier;
   final VoidCallback? onTap;
-  final Color? accentColor; // Used for left accent on Priority, top accent on Stat
+  final Color?
+  accentColor; // Used for left accent on Priority, top accent on Stat
 
   const PMCard({
     super.key,
@@ -71,7 +72,7 @@ class PMCard extends StatelessWidget {
     BorderSide defaultBorder = BorderSide(
       color: isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight,
     );
-    
+
     BoxDecoration decoration;
 
     switch (tier) {
@@ -87,8 +88,8 @@ class PMCard extends StatelessWidget {
             top: defaultBorder,
             right: defaultBorder,
             bottom: defaultBorder,
-            left: accentColor != null 
-                ? BorderSide(color: accentColor!, width: 4.0) 
+            left: accentColor != null
+                ? BorderSide(color: accentColor!, width: 4.0)
                 : defaultBorder,
           ),
         );
@@ -104,20 +105,18 @@ class PMCard extends StatelessWidget {
         );
         break;
       case PMCardTier.stat:
-        padding = const EdgeInsets.all(PMSpacing.s3);
+        padding = EdgeInsets.fromLTRB(
+          PMSpacing.s3,
+          accentColor == null ? PMSpacing.s3 : PMSpacing.s3 + 2,
+          PMSpacing.s3,
+          PMSpacing.s3,
+        );
         radius = PMRadius.sm;
         shadow = null;
         decoration = BoxDecoration(
           color: theme.colorScheme.surface,
           borderRadius: radius,
-          border: Border(
-            top: accentColor != null 
-                ? BorderSide(color: accentColor!, width: 2.0) 
-                : defaultBorder,
-            right: defaultBorder,
-            bottom: defaultBorder,
-            left: defaultBorder,
-          ),
+          border: Border.fromBorderSide(defaultBorder),
         );
         break;
     }
@@ -125,17 +124,19 @@ class PMCard extends StatelessWidget {
     Widget content = Container(
       padding: padding,
       decoration: decoration,
+      foregroundDecoration: tier == PMCardTier.stat && accentColor != null
+          ? BoxDecoration(
+              borderRadius: radius,
+              border: Border(top: BorderSide(color: accentColor!, width: 2)),
+            )
+          : null,
       child: child,
     );
 
     if (onTap != null) {
       return Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: radius,
-          child: content,
-        ),
+        child: InkWell(onTap: onTap, borderRadius: radius, child: content),
       );
     }
 

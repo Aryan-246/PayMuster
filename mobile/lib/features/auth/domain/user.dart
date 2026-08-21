@@ -10,6 +10,7 @@ enum UserRole {
 
 class User {
   final String id;
+  final String? publicId;
   final String email;
   final UserRole role;
   final String? organizationId;
@@ -17,6 +18,7 @@ class User {
 
   const User({
     required this.id,
+    this.publicId,
     required this.email,
     required this.role,
     this.organizationId,
@@ -25,6 +27,7 @@ class User {
 
   User copyWith({
     String? id,
+    String? publicId,
     String? email,
     UserRole? role,
     String? organizationId,
@@ -32,6 +35,7 @@ class User {
   }) {
     return User(
       id: id ?? this.id,
+      publicId: publicId ?? this.publicId,
       email: email ?? this.email,
       role: role ?? this.role,
       organizationId: organizationId ?? this.organizationId,
@@ -53,6 +57,7 @@ class User {
 
     return User(
       id: json['id'] as String,
+      publicId: json['publicId'] as String?,
       email: json['email'] as String,
       role: role,
       organizationId: json['organizationId'] as String?,
@@ -63,6 +68,7 @@ class User {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'publicId': publicId,
       'email': email,
       'role': role.name,
       'organizationId': organizationId,

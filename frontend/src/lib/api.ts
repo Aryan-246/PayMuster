@@ -68,3 +68,13 @@ export function postJson<T>(path: string, payload: unknown): Promise<T> {
     body: JSON.stringify(payload),
   });
 }
+
+export function authenticatedPostJson<T>(path: string, accessToken: string, payload: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}

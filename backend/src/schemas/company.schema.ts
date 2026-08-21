@@ -20,8 +20,23 @@ export const promotionRequestSchema = z.object({
   reason: z.string().optional(),
 });
 
+const optionalTrimmedText = (maximum: number) =>
+  z.string().trim().min(1).max(maximum).optional();
+
+const optionalHttpsUrl = z
+  .string()
+  .trim()
+  .url()
+  .max(2048)
+  .refine((value) => new URL(value).protocol === 'https:', 'Evidence links must use HTTPS.')
+  .optional();
+
 export const ownerRequestSchema = z.object({
-  businessRegistrationNumber: z.string().optional(),
+  companyName: z.string().trim().min(2, 'Company name is required').max(120),
+  companyAddress: optionalTrimmedText(500),
+  gstin: optionalTrimmedText(20),
+  businessRegistrationUrl: optionalHttpsUrl,
+  identityProofUrl: optionalHttpsUrl,
 });
 
 export const inviteUserSchema = z.object({

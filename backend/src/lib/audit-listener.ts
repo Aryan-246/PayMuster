@@ -12,9 +12,10 @@ export function setupAuditListener() {
     changes: any;
   }) => {
     try {
+      const validOrgId = payload.orgId && payload.orgId !== 'SYSTEM' && /^[0-9a-fA-F-]{36}$/.test(payload.orgId) ? payload.orgId : null;
       await prisma.auditLog.create({
         data: {
-          orgId: payload.orgId,
+          orgId: validOrgId,
           userId: payload.userId,
           action: payload.action,
           entityType: payload.entityType,
@@ -23,6 +24,7 @@ export function setupAuditListener() {
           changes: payload.changes,
         }
       });
+
     } catch (err) {
       console.error('[AuditLog] Failed to insert log', err);
     }

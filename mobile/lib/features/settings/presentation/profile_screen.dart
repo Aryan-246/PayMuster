@@ -1,8 +1,11 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../theme/paymuster_tokens.dart';
+import 'package:go_router/go_router.dart';
+
 import '../../../components/foundation/pm_text_input.dart';
-import '../../auth/presentation/auth_controller.dart';
+import '../../../theme/paymuster_tokens.dart';
+import '../data/profile_api_client.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -13,65 +16,131 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
-  
-  late TextEditingController _nameController;
-  late TextEditingController _phoneController;
-  late TextEditingController _emailController;
-  late TextEditingController _emergencyContactController;
-  late TextEditingController _bloodGroupController;
+  late final TextEditingController _nameController;
+  late final TextEditingController _phoneController;
 
-  bool _isEditing = false;
+  ProfileSnapshot? _profile;
+  bool _loading = true;
+  bool _saving = false;
+  bool _uploadingAvatar = false;
+  bool _editing = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
-    _phoneController = TextEditingController(text: '+91 9876543210');
-    _emailController = TextEditingController();
-    _emergencyContactController = TextEditingController(text: '+91 9876543211');
-    _bloodGroupController = TextEditingController(text: 'O+');
-    
-    // Load initial data from auth state
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final authState = ref.read(authControllerProvider);
-      if (authState.user != null) {
-        _nameController.text = authState.user!.name ?? '';
-        _emailController.text = authState.user!.email;
-      }
-    });
+    _phoneController = TextEditingController();
+    _loadProfile();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
-    _emailController.dispose();
-    _emergencyContactController.dispose();
-    _bloodGroupController.dispose();
     super.dispose();
   }
 
-  void _toggleEdit() {
-    setState(() {
-      if (_isEditing) {
-        if (_formKey.currentState!.validate()) {
-          final currentUser = ref.read(authControllerProvider).user;
-          if (currentUser != null) {
-            final updatedUser = currentUser.copyWith(
-              name: _nameController.text,
-            );
-            ref.read(authControllerProvider.notifier).updateUser(updatedUser);
-          }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile saved successfully')),
+  Future<void> _loadProfile() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final profile = await ref.read(profileApiProvider).getProfile();
+      if (!mounted) return;
+      _applyProfile(profile);
+      setState(() {
+        _profile = profile;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = _message(error);
+      });
+    }
+  }
+
+  void _applyProfile(ProfileSnapshot profile) {
+    _nameController.text = profile.name;
+    _phoneController.text = profile.phone ?? '';
+  }
+
+  Future<void> _saveProfile() async {
+    if (_saving || !_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      final profile = await ref
+          .read(profileApiProvider)
+          .updateProfile(
+            name: _nameController.text,
+            phone: _phoneController.text.trim().isEmpty
+                ? null
+                : _phoneController.text.trim(),
           );
-          _isEditing = false;
-        }
-      } else {
-        _isEditing = true;
+      if (!mounted) return;
+      _applyProfile(profile);
+      setState(() {
+        _profile = profile;
+        _editing = false;
+      });
+      _showMessage('Profile saved successfully.');
+    } catch (error) {
+      if (mounted) _showError(_message(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _pickAvatar() async {
+    if (_uploadingAvatar) return;
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png'],
+      );
+      if (file == null || !mounted) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        _showError('The selected avatar is empty.');
+        return;
       }
-    });
+      final extension = file.name.split('.').last.toLowerCase();
+      final mimeType = extension == 'png' ? 'image/png' : 'image/jpeg';
+      setState(() => _uploadingAvatar = true);
+      final profile = await ref
+          .read(profileApiProvider)
+          .uploadAvatar(bytes: bytes, mimeType: mimeType);
+      if (!mounted) return;
+      setState(() => _profile = profile);
+      _showMessage('Profile picture updated.');
+    } catch (error) {
+      if (mounted) _showError(_message(error));
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
+  String _message(Object error) =>
+      error.toString().replaceFirst(RegExp(r'^Exception: '), '');
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ),
+    );
   }
 
   @override
@@ -79,120 +148,274 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : PMColors.textPrimaryLight;
-    final bgColor = isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight;
-    final authState = ref.watch(authControllerProvider);
-    final user = authState.user;
+    final background = isDark
+        ? PMColors.bgPrimaryDark
+        : PMColors.bgPrimaryLight;
+    final surface = isDark ? PMColors.bgSurfaceDark : PMColors.bgSurfaceLight;
 
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: background,
       appBar: AppBar(
-        title: Text('Profile', style: PMTypography.title.copyWith(color: textColor)),
-        backgroundColor: isDark ? PMColors.bgSurfaceDark : PMColors.bgSurfaceLight,
+        title: Text(
+          'Profile',
+          style: PMTypography.title.copyWith(color: textColor),
+        ),
+        backgroundColor: surface,
         elevation: 0,
         actions: [
           IconButton(
-            icon: Icon(_isEditing ? Icons.check : Icons.edit, color: textColor),
-            onPressed: _toggleEdit,
+            tooltip: _editing ? 'Save profile' : 'Edit profile',
+            onPressed: _loading || _saving
+                ? null
+                : (_editing
+                      ? _saveProfile
+                      : () => setState(() => _editing = true)),
+            icon: _saving
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(_editing ? Icons.check : Icons.edit, color: textColor),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 50,
-                      backgroundColor: PMColors.brandPrimaryLight,
-                      child: Text(
-                        (user?.name?.isNotEmpty == true) ? user!.name!.substring(0, 1).toUpperCase() : 'U',
-                        style: PMTypography.displayLarge.copyWith(color: Colors.white),
-                      ),
-                    ),
-                    if (_isEditing)
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: CircleAvatar(
-                          radius: 18,
-                          backgroundColor: PMColors.accentOrangeLight,
-                          child: IconButton(
-                            icon: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
-                            onPressed: () {
-                              // TODO: Implement photo picker
-                            },
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? _ProfileMessage(
+              icon: Icons.cloud_off_outlined,
+              title: 'Profile unavailable',
+              message: _error!,
+              actionLabel: 'Retry',
+              onAction: _loadProfile,
+            )
+          : _profile == null
+          ? _ProfileMessage(
+              icon: Icons.person_outline,
+              title: 'Profile unavailable',
+              message: 'Your profile could not be loaded.',
+              actionLabel: 'Retry',
+              onAction: _loadProfile,
+            )
+          : RefreshIndicator(
+              onRefresh: _loadProfile,
+              child: _ProfileContent(
+                profile: _profile!,
+                formKey: _formKey,
+                nameController: _nameController,
+                phoneController: _phoneController,
+                editing: _editing,
+                uploadingAvatar: _uploadingAvatar,
+                textColor: textColor,
+                onPickAvatar: _editing ? _pickAvatar : null,
+                onOpenDocuments: () => context.push('/app/documents'),
               ),
-              const SizedBox(height: 32),
+            ),
+    );
+  }
+}
+
+class _ProfileContent extends StatelessWidget {
+  const _ProfileContent({
+    required this.profile,
+    required this.formKey,
+    required this.nameController,
+    required this.phoneController,
+    required this.editing,
+    required this.uploadingAvatar,
+    required this.textColor,
+    required this.onPickAvatar,
+    required this.onOpenDocuments,
+  });
+
+  final ProfileSnapshot profile;
+  final GlobalKey<FormState> formKey;
+  final TextEditingController nameController;
+  final TextEditingController phoneController;
+  final bool editing;
+  final bool uploadingAvatar;
+  final Color textColor;
+  final VoidCallback? onPickAvatar;
+  final VoidCallback onOpenDocuments;
+
+  @override
+  Widget build(BuildContext context) {
+    final verification = profile.verification;
+    final avatar = profile.avatarUrl;
+    final initials = profile.name.trim().isEmpty
+        ? 'U'
+        : profile.name.trim().substring(0, 1).toUpperCase();
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(PMSpacing.s6),
+      children: [
+        Center(
+          child: Stack(
+            children: [
+              CircleAvatar(
+                radius: 52,
+                backgroundColor: PMColors.brandPrimaryLight,
+                backgroundImage: avatar == null
+                    ? null
+                    : NetworkImage(avatar.toString()),
+                child: avatar == null
+                    ? Text(
+                        initials,
+                        style: PMTypography.displayLarge.copyWith(
+                          color: Colors.white,
+                        ),
+                      )
+                    : null,
+              ),
+              if (editing)
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: CircleAvatar(
+                    radius: 19,
+                    backgroundColor: PMColors.accentOrangeLight,
+                    child: IconButton(
+                      tooltip: 'Change profile picture',
+                      onPressed: uploadingAvatar ? null : onPickAvatar,
+                      icon: uploadingAvatar
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.camera_alt,
+                              size: 18,
+                              color: Colors.white,
+                            ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: PMSpacing.s6),
+        Form(
+          key: formKey,
+          child: Column(
+            children: [
               PMTextInput(
                 labelText: 'Full Name',
-                controller: _nameController,
-                enabled: _isEditing,
-                validator: (val) => val == null || val.isEmpty ? 'Required' : null,
+                controller: nameController,
+                enabled: editing,
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 16),
-              PMTextInput(
-                labelText: 'Email',
-                controller: _emailController,
-                enabled: false, // Usually email is not editable directly here
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: PMSpacing.s3),
               PMTextInput(
                 labelText: 'Phone Number',
-                controller: _phoneController,
-                enabled: _isEditing,
+                controller: phoneController,
+                enabled: editing,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: PMSpacing.s3),
               PMTextInput(
-                labelText: 'Emergency Contact',
-                controller: _emergencyContactController,
-                enabled: _isEditing,
-              ),
-              const SizedBox(height: 16),
-              PMTextInput(
-                labelText: 'Blood Group',
-                controller: _bloodGroupController,
-                enabled: _isEditing,
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Work Details',
-                style: PMTypography.title.copyWith(color: textColor),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.business),
-                title: Text('Company', style: PMTypography.body.copyWith(color: textColor)),
-                subtitle: const Text('PayMuster Mock Org'),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.badge),
-                title: Text('Role', style: PMTypography.body.copyWith(color: textColor)),
-                subtitle: Text(user?.role.name.toUpperCase() ?? 'UNKNOWN'),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.description),
-                title: Text('Documents', style: PMTypography.body.copyWith(color: textColor)),
-                subtitle: const Text('3 uploaded (ID, Address, Certificates)'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  // TODO: Navigate to Documents screen
-                },
+                labelText: 'Email',
+                controller: TextEditingController(text: profile.email),
+                enabled: false,
               ),
             ],
           ),
+        ),
+        const SizedBox(height: PMSpacing.s6),
+        Text(
+          'Work Details',
+          style: PMTypography.title.copyWith(color: textColor),
+        ),
+        const SizedBox(height: PMSpacing.s2),
+        _InfoTile(
+          label: 'Company',
+          value: profile.organization?.name ?? 'Unassigned',
+        ),
+        _InfoTile(label: 'Role', value: profile.role),
+        _InfoTile(label: 'Public ID', value: profile.publicId ?? 'Unavailable'),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.description_outlined),
+          title: Text(
+            'Documents',
+            style: PMTypography.body.copyWith(color: textColor),
+          ),
+          subtitle: Text(
+            '${verification.total} uploaded · ${verification.verified} verified · ${verification.pending} pending · ${verification.rejected} rejected',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onOpenDocuments,
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.verified_outlined),
+          title: Text(
+            'Verification',
+            style: PMTypography.body.copyWith(color: textColor),
+          ),
+          subtitle: Text(
+            '${verification.verified} of ${verification.total} verified',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoTile extends StatelessWidget {
+  const _InfoTile({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(label),
+      subtitle: Text(value),
+    );
+  }
+}
+
+class _ProfileMessage extends StatelessWidget {
+  const _ProfileMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(PMSpacing.s6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 44, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: PMSpacing.s4),
+            Text(title, style: PMTypography.headline),
+            const SizedBox(height: PMSpacing.s2),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: PMSpacing.s5),
+            FilledButton.icon(
+              onPressed: onAction,
+              icon: const Icon(Icons.refresh),
+              label: Text(actionLabel),
+            ),
+          ],
         ),
       ),
     );

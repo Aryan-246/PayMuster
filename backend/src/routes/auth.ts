@@ -1,8 +1,9 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAppError, AppError } from '../lib/app-error.js';
 import { authService, type AuthRequestContext } from '../lib/auth-service.js';
 import { logger } from '../lib/logger.js';
+import { maintenanceService } from '../lib/maintenance-service.js';
 import { rateLimit } from '../lib/rate-limit.js';
 import { requireAuth } from '../middlewares/auth.js';
 import { prisma } from '../lib/prisma.js';
@@ -105,6 +106,19 @@ function endpoint(handler: Endpoint) {
   };
 }
 
+export async function requirePublicOperationalState(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await maintenanceService.assertOperational();
+    next();
+  } catch (error) {
+    handleEndpointError(request, response, error);
+  }
+}
+
 const signupRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'signup' });
 const loginRateLimit = rateLimit(15 * 60_000, 20, { keyPrefix: 'login' });
 const otpRequestRateLimit = rateLimit(15 * 60_000, 5, {
@@ -114,7 +128,7 @@ const otpRequestRateLimit = rateLimit(15 * 60_000, 5, {
 const otpVerificationRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'otp-verification' });
 const sessionRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'session' });
 
-router.post('/signup', signupRateLimit, endpoint(async (request, response) => {
+router.post('/signup', requirePublicOperationalState, signupRateLimit, endpoint(async (request, response) => {
   const data = signupSchema.parse(request.body);
   const result = await authService.register(data, requestContext(request));
 
@@ -129,7 +143,7 @@ router.post('/signup', signupRateLimit, endpoint(async (request, response) => {
   });
 }));
 
-router.post('/resend-verification', otpRequestRateLimit, endpoint(async (request, response) => {
+router.post('/resend-verification', requirePublicOperationalState, otpRequestRateLimit, endpoint(async (request, response) => {
   const { email } = z.object({ email: emailSchema }).parse(request.body);
   const issued = await authService.resendEmailVerification(email);
 
@@ -150,8 +164,8 @@ const verifyEmail = endpoint(async (request, response) => {
   });
 });
 
-router.post('/verify-email', otpVerificationRateLimit, verifyEmail);
-router.post('/verify-otp', otpVerificationRateLimit, verifyEmail);
+router.post('/verify-email', requirePublicOperationalState, otpVerificationRateLimit, verifyEmail);
+router.post('/verify-otp', requirePublicOperationalState, otpVerificationRateLimit, verifyEmail);
 
 router.post('/login', loginRateLimit, endpoint(async (request, response) => {
   const data = loginSchema.parse(request.body);
@@ -166,7 +180,7 @@ router.post('/login', loginRateLimit, endpoint(async (request, response) => {
   });
 }));
 
-router.post('/forgot-password', otpRequestRateLimit, endpoint(async (request, response) => {
+router.post('/forgot-password', requirePublicOperationalState, otpRequestRateLimit, endpoint(async (request, response) => {
   const { email } = z.object({ email: emailSchema }).parse(request.body);
   const result = await authService.requestPasswordReset(email, requestContext(request));
 
@@ -176,7 +190,7 @@ router.post('/forgot-password', otpRequestRateLimit, endpoint(async (request, re
   });
 }));
 
-router.post('/reset-password', otpVerificationRateLimit, endpoint(async (request, response) => {
+router.post('/reset-password', requirePublicOperationalState, otpVerificationRateLimit, endpoint(async (request, response) => {
   const data = passwordResetSchema.parse(request.body);
   await authService.resetPassword(data, requestContext(request));
 
@@ -223,7 +237,7 @@ router.get('/me', requireAuth, endpoint(async (request, response) => {
       lastName: true,
     }
   });
-  
+
   if (!user) {
     throw new AppError('NOT_FOUND', 'User not found', 404);
   }

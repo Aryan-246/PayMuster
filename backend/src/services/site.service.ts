@@ -5,33 +5,40 @@ import { AppError } from '../lib/app-error.js';
 
 export class SiteService {
   async createSite(orgId: string, userId: string, data: { name: string; address?: string }) {
-    const site = await siteRepository.createSite(orgId, {
+    const site = await siteRepository.createSiteWithManager(orgId, userId, {
       ...data,
-      status: 'DRAFT',
+      status: SiteStatus.DRAFT,
     });
 
     eventBus.emitEvent(Events.SITE_CREATED, { siteId: site.id, orgId });
+    eventBus.emitEvent(Events.WORKER_JOINED_SITE, {
+      siteId: site.id,
+      orgId,
+      userId,
+      role: SiteRole.MANAGER,
+      assignedBy: userId,
+    });
 
-    // Automatically assign creator as MANAGER of the site
-    await siteRepository.addMember(site.id, orgId, userId, SiteRole.MANAGER);
-    eventBus.emitEvent(Events.WORKER_JOINED_SITE, { siteId: site.id, userId, role: SiteRole.MANAGER });
-
-    return site;
+    return this.getSiteDetails(orgId, site.id);
   }
 
   async assignWorker(orgId: string, siteId: string, targetUserId: string, role: SiteRole, assignedBy: string) {
-    const site = await this.getSiteDetails(orgId, siteId);
-    if (!site) throw new AppError('SITE_NOT_FOUND', 'Site not found', 404);
+    const membership = await siteRepository.addMember(siteId, orgId, targetUserId, role);
 
-    await siteRepository.addMember(siteId, orgId, targetUserId, role);
-    
-    eventBus.emitEvent(Events.WORKER_JOINED_SITE, { siteId, orgId, userId: targetUserId, role, assignedBy });
-    
-    return { success: true };
+    eventBus.emitEvent(Events.WORKER_JOINED_SITE, {
+      siteId,
+      orgId,
+      userId: targetUserId,
+      role,
+      assignedBy,
+    });
+
+    return membership;
   }
 
   async getSites(orgId: string, status?: SiteStatus) {
-    return siteRepository.getSites(orgId, { status });
+    const sites = await siteRepository.getSites(orgId, { status });
+    return sites.map((site) => this.toSiteSummary(site));
   }
 
   async getSiteDetails(orgId: string, siteId: string) {
@@ -39,42 +46,81 @@ export class SiteService {
     if (!site) {
       throw new AppError('SITE_NOT_FOUND', 'Site not found', 404);
     }
-    return site;
+    return this.toSiteSummary(site);
   }
 
   async updateSiteStatus(orgId: string, siteId: string, newStatus: SiteStatus, userId: string, reason?: string) {
     const site = await this.getSiteDetails(orgId, siteId);
     const oldStatus = site.status;
 
-    // Validate state machine transitions
     this.validateTransition(oldStatus, newStatus);
 
-    const updatedSite = await siteRepository.updateSiteStatus(siteId, oldStatus, newStatus, userId, reason);
+    const updatedSite = await siteRepository.updateSiteStatus(
+      orgId,
+      siteId,
+      oldStatus,
+      newStatus,
+      userId,
+      reason,
+    );
+    if (!updatedSite) {
+      throw new AppError('SITE_STATUS_CONFLICT', 'The site status changed before this request completed.', 409);
+    }
 
     eventBus.emitEvent(Events.SITE_STATUS_CHANGED, {
       siteId,
+      orgId,
       oldStatus,
       newStatus,
       userId,
     });
 
-    return updatedSite;
+    return this.getSiteDetails(orgId, siteId);
   }
 
   private validateTransition(oldStatus: SiteStatus, newStatus: SiteStatus) {
     const validTransitions: Record<SiteStatus, SiteStatus[]> = {
-      DRAFT: ['PENDING'],
-      PENDING: ['ACTIVE', 'REJECTED'] as any, // We might not have REJECTED in enum, assuming ACTIVE only for now
-      ACTIVE: ['SUSPENDED', 'ARCHIVED'],
-      SUSPENDED: ['ACTIVE', 'DELETED'],
-      ARCHIVED: ['DELETED'],
+      DRAFT: [SiteStatus.PENDING],
+      PENDING: [SiteStatus.ACTIVE],
+      ACTIVE: [SiteStatus.SUSPENDED, SiteStatus.ARCHIVED],
+      SUSPENDED: [SiteStatus.ACTIVE, SiteStatus.DELETED],
+      ARCHIVED: [SiteStatus.DELETED],
       DELETED: [],
     };
 
-    const allowed = validTransitions[oldStatus] || [];
-    if (!allowed.includes(newStatus)) {
-      throw new AppError('INVALID_STATE_TRANSITION', `Invalid status transition from ${oldStatus} to ${newStatus}`, 400);
+    if (!validTransitions[oldStatus].includes(newStatus)) {
+      throw new AppError(
+        'INVALID_STATE_TRANSITION',
+        `Invalid status transition from ${oldStatus} to ${newStatus}`,
+        400,
+      );
     }
+  }
+
+  private toSiteSummary(site: Awaited<ReturnType<typeof siteRepository.getSites>>[number]) {
+    const manager = site.siteMembers.find((member) => member.role === SiteRole.MANAGER)?.user ?? null;
+    const supervisor = site.siteMembers.find((member) => member.role === SiteRole.SUPERVISOR)?.user ?? null;
+    const approvedExpenseTotal = site.expenses.reduce(
+      (total, expense) => total + Number(expense.amount),
+      0,
+    );
+
+    return {
+      id: site.id,
+      publicId: site.publicId,
+      name: site.name,
+      address: site.address,
+      status: site.status,
+      startDate: site.startDate,
+      expectedEndDate: site.expectedEndDate,
+      createdAt: site.createdAt,
+      updatedAt: site.updatedAt,
+      workerCount: site.siteAssignments.length,
+      manager,
+      supervisor,
+      workers: site.siteAssignments.map((assignment) => assignment.staff),
+      approvedExpenseTotal,
+    };
   }
 }
 

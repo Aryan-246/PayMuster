@@ -10,7 +10,6 @@ class EventBus extends EventEmitter {
 
 export const eventBus = new EventBus();
 
-// Strongly typed event names
 export const Events = {
   SITE_CREATED: 'SiteCreated',
   SITE_UPDATED: 'SiteUpdated',
@@ -20,6 +19,8 @@ export const Events = {
   COMPANY_CREATED: 'CompanyCreated',
   COMPANY_SUSPENDED: 'CompanySuspended',
   USER_DELETED: 'UserDeleted',
+  ATTENDANCE_MARKED: 'AttendanceMarked',
+  PAYROLL_CREATED: 'PayrollCreated',
 } as const;
 
 // Example Handlers attachment

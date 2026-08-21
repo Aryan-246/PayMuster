@@ -14,7 +14,12 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
       status: AuthStatus.authenticated,
       isInitializing: false,
       hasSeenOnboarding: true,
-      user: User(id: '1', email: 'worker@test.com', role: UserRole.staff, name: 'Worker'),
+      user: User(
+        id: '1',
+        email: 'worker@test.com',
+        role: UserRole.staff,
+        name: 'Worker',
+      ),
     );
   }
 
@@ -24,7 +29,7 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
   }
 
   @override
-  Future<void> fetchMe() async {}
+  Future<User?> fetchMe() async => state.user;
 
   @override
   Future<bool> verifyDeleteAccountOtp(String otp) async {
@@ -33,14 +38,17 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
 
   @override
   Future<bool> deleteAccount(String otp) async {
-    state = const AuthState(status: AuthStatus.unauthenticated, isInitializing: false);
+    state = const AuthState(
+      status: AuthStatus.unauthenticated,
+      isInitializing: false,
+    );
     return true;
   }
 
   @override
   Future<void> checkAuthStatus() async {}
   @override
-  void markOnboardingSeen() {}
+  Future<void> markOnboardingSeen() async {}
   @override
   Future<bool> signIn(String email, String password) async => true;
   @override
@@ -54,7 +62,11 @@ class MockAuthController extends Notifier<AuthState> implements AuthController {
   @override
   Future<bool> resendVerification(String email) async => true;
   @override
-  Future<bool> resetPasswordComplete(String email, String otp, String newPassword) async => true;
+  Future<bool> resetPasswordComplete(
+    String email,
+    String otp,
+    String newPassword,
+  ) async => true;
   @override
   Future<void> signOut() async {}
   @override
@@ -74,23 +86,26 @@ void main() {
             AppLocalizations.delegate,
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate
+            GlobalCupertinoLocalizations.delegate,
           ],
           supportedLocales: AppLocalizations.supportedLocales,
           home: const Scaffold(
             body: RefreshIndicator(
               onRefresh: _dummy,
-              child: CustomScrollView(slivers: [SliverToBoxAdapter(child: Text('test'))]),
+              child: CustomScrollView(
+                slivers: [SliverToBoxAdapter(child: Text('test'))],
+              ),
             ),
           ),
         ),
       ),
     );
-    
+
     await tester.pump();
     if (tester.takeException() != null) {
       debugPrint('Exception found: ${tester.takeException()}');
     }
   });
 }
+
 Future<void> _dummy() async {}

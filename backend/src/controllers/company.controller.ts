@@ -77,18 +77,16 @@ export class CompanyController {
 
   // OWNER
   async requestOwnership(req: Request, res: Response) {
-    const orgId = req.context.tenant!.companyId!;
     const userId = req.context.user!.id;
-    const request = await ownerService.requestOwnership(userId, req.body.companyName, req.body.gstin);
+    const { companyName, companyAddress, gstin, businessRegistrationUrl, identityProofUrl } = req.body;
+    const request = await ownerService.requestOwnership(userId, companyName, gstin, companyAddress, businessRegistrationUrl, identityProofUrl);
     res.status(201).json({ success: true, data: request, meta: { requestId: req.id } });
   }
 
-  async approveOwnership(req: Request, res: Response) {
-    const orgId = req.context.tenant!.companyId!;
-    const requestId = req.params.id as string;
-    const approvedBy = req.context.user!.id;
-    const result = await ownerService.approveRequest('SYSTEM', requestId, approvedBy);
-    res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  async getMyOwnershipRequest(req: Request, res: Response) {
+    const userId = req.context.user!.id;
+    const request = await ownerService.getMyRequest(userId);
+    res.status(200).json({ success: true, data: request, meta: { requestId: req.id } });
   }
 
   // INVITATION

@@ -2,6 +2,7 @@ import { postJson } from './api';
 
 export interface AuthenticatedUser {
   id: string;
+  publicId: string;
   email: string | null;
   name: string | null;
   provider: string | null;

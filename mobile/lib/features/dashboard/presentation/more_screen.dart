@@ -4,19 +4,28 @@ import 'package:go_router/go_router.dart';
 import '../../../theme/paymuster_tokens.dart';
 import '../../auth/domain/user.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../admin/presentation/admin_more_screen.dart';
 
 class MoreScreen extends ConsumerWidget {
   const MoreScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(authControllerProvider).user;
+    final authState = ref.watch(authControllerProvider);
+    final user = authState.user;
+    final role = user?.role ?? UserRole.staff;
+
+    if (role == UserRole.superAdmin) {
+      return const AdminMoreScreen();
+    }
+
     if (user == null) return const Center(child: CircularProgressIndicator());
-    final role = user.role;
+
     final theme = Theme.of(context);
+
     final isDark = theme.brightness == Brightness.dark;
-    final textColor = isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight;
     final bgSurface = isDark ? PMColors.bgSurfaceDark : PMColors.bgSurfaceLight;
+    final textColor = isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight;
     final borderCol = isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight;
 
     return Scaffold(
@@ -45,6 +54,14 @@ class MoreScreen extends ConsumerWidget {
                   _buildListTile(context, Icons.business, 'Company & Join Code', '/app/company-info', textColor),
               ],
             ),
+          _buildSection(
+            title: 'Career',
+            items: [
+              _buildListTile(context, Icons.work, 'Career Paths', '/app/career', textColor),
+              _buildListTile(context, Icons.arrow_upward, 'Promotion Status', '/app/promotion-status', textColor),
+              _buildListTile(context, Icons.business, 'Owner Promotion', '/app/owner-request', textColor),
+            ],
+          ),
           _buildSection(
             title: 'Site Operations',
             items: [
@@ -78,7 +95,6 @@ class MoreScreen extends ConsumerWidget {
                 title: Text('Logout', style: PMTypography.body.copyWith(color: PMColors.statusDangerLight)),
                 onTap: () async {
                   await ref.read(authControllerProvider.notifier).signOut();
-                  if (context.mounted) context.go('/login');
                 },
               ),
             ],

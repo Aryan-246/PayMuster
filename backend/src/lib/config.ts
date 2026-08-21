@@ -55,6 +55,25 @@ const emailUser = process.env.EMAIL_USER?.trim() ?? '';
 const appUrl = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '');
 const jwtAccessExpiresIn = process.env.JWT_ACCESS_EXPIRES_IN ?? '15m';
 const jwtRefreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN ?? '30d';
+const supportedDocumentMimeTypes = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+]);
+const documentAllowedMimeTypes = (process.env.DOCUMENT_ALLOWED_MIME_TYPES ??
+  Array.from(supportedDocumentMimeTypes).join(','))
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+if (
+  documentAllowedMimeTypes.length === 0 ||
+  documentAllowedMimeTypes.some((value) => !supportedDocumentMimeTypes.has(value))
+) {
+  throw new Error(
+    'DOCUMENT_ALLOWED_MIME_TYPES must contain only application/pdf, image/jpeg, or image/png.',
+  );
+}
 
 export const config = Object.freeze({
   nodeEnv,
@@ -83,6 +102,32 @@ export const config = Object.freeze({
   smtpPort: parsePositiveInteger('SMTP_PORT', process.env.SMTP_PORT, 465),
   smtpSecure: parseBoolean(process.env.SMTP_SECURE, true),
   googleClientId: process.env.GOOGLE_WEB_CLIENT_ID ?? process.env.GOOGLE_ANDROID_CLIENT_ID ?? '',
+  geminiApiKey: process.env.GEMINI_API_KEY?.trim(),
+  geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+  geminiTimeoutMs: parsePositiveInteger(
+    'GEMINI_TIMEOUT_MS',
+    process.env.GEMINI_TIMEOUT_MS,
+    15_000,
+  ),
+  supabaseUrl: (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, ''),
+  supabaseServiceRoleKey: (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim(),
+  documentStorageBucket: (process.env.DOCUMENT_STORAGE_BUCKET ?? '').trim(),
+  documentUploadMaxBytes: parsePositiveInteger(
+    'DOCUMENT_UPLOAD_MAX_BYTES',
+    process.env.DOCUMENT_UPLOAD_MAX_BYTES,
+    10 * 1024 * 1024,
+  ),
+  documentSignedUrlTtlSeconds: parsePositiveInteger(
+    'DOCUMENT_SIGNED_URL_TTL_SECONDS',
+    process.env.DOCUMENT_SIGNED_URL_TTL_SECONDS,
+    300,
+  ),
+  avatarUploadMaxBytes: parsePositiveInteger(
+    'AVATAR_UPLOAD_MAX_BYTES',
+    process.env.AVATAR_UPLOAD_MAX_BYTES,
+    5 * 1024 * 1024,
+  ),
+  documentAllowedMimeTypes: Object.freeze(documentAllowedMimeTypes),
   corsOrigins: (process.env.CORS_ORIGINS ?? defaultOrigins.join(','))
     .split(',')
     .map((value) => value.trim())

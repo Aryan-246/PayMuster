@@ -15,6 +15,7 @@ class PMTextInput extends StatelessWidget {
   final Widget? suffixIcon;
   final bool enabled;
   final int? maxLines;
+  final int? maxLength;
   final String? Function(String?)? validator;
 
   const PMTextInput({
@@ -32,6 +33,7 @@ class PMTextInput extends StatelessWidget {
     this.suffixIcon,
     this.enabled = true,
     this.maxLines = 1,
+    this.maxLength,
     this.validator,
   });
 
@@ -40,9 +42,15 @@ class PMTextInput extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final borderDefault = isDark ? PMColors.borderDefaultDark : PMColors.borderDefaultLight;
-    final borderFocus = isDark ? PMColors.brandPrimaryDark : PMColors.brandPrimaryLight;
-    final borderError = isDark ? PMColors.statusDangerDark : PMColors.statusDangerLight;
+    final borderDefault = isDark
+        ? PMColors.borderDefaultDark
+        : PMColors.borderDefaultLight;
+    final borderFocus = isDark
+        ? PMColors.brandPrimaryDark
+        : PMColors.brandPrimaryLight;
+    final borderError = isDark
+        ? PMColors.statusDangerDark
+        : PMColors.statusDangerLight;
     final fill = isDark ? PMColors.bgRaisedDark : PMColors.bgRaisedLight;
     final fillFocus = isDark ? PMColors.bgSurfaceDark : PMColors.bgSurfaceLight;
 
@@ -56,7 +64,9 @@ class PMTextInput extends StatelessWidget {
             Text(
               labelText!,
               style: PMTypography.label.copyWith(
-                color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+                color: isDark
+                    ? PMColors.textSecondaryDark
+                    : PMColors.textSecondaryLight,
               ),
             ),
             const SizedBox(height: PMSpacing.s2),
@@ -70,14 +80,19 @@ class PMTextInput extends StatelessWidget {
             onFieldSubmitted: onSubmitted,
             enabled: enabled,
             maxLines: maxLines,
+            maxLength: maxLength,
             validator: validator,
             style: PMTypography.body.copyWith(
-              color: isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight,
+              color: isDark
+                  ? PMColors.textPrimaryDark
+                  : PMColors.textPrimaryLight,
             ),
             decoration: InputDecoration(
               hintText: hintText,
               hintStyle: PMTypography.body.copyWith(
-                color: isDark ? PMColors.textTertiaryDark : PMColors.textTertiaryLight,
+                color: isDark
+                    ? PMColors.textTertiaryDark
+                    : PMColors.textTertiaryLight,
               ),
               prefixIcon: prefixIcon,
               suffixIcon: suffixIcon,
@@ -90,7 +105,8 @@ class PMTextInput extends StatelessWidget {
               }),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: PMSpacing.s4,
-                vertical: PMSpacing.s4, // Approx aligns to 52px height depending on text height
+                vertical: PMSpacing
+                    .s4, // Approx aligns to 52px height depending on text height
               ),
               border: OutlineInputBorder(
                 borderRadius: PMRadius.sm,
@@ -113,9 +129,7 @@ class PMTextInput extends StatelessWidget {
                 borderSide: BorderSide(color: borderError, width: 2),
               ),
               errorText: errorText,
-              errorStyle: PMTypography.caption.copyWith(
-                color: borderError,
-              ),
+              errorStyle: PMTypography.caption.copyWith(color: borderError),
             ),
           ),
         ],

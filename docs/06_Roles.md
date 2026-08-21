@@ -7,7 +7,7 @@ PayMuster enforces strict Role-Based Access Control (RBAC). Every API request is
 ## The 6 Roles
 
 | Role | Description | Typical User |
-|---|---|---|
+| --- | --- | --- |
 | **Owner** | Full system control. Can manage billing, delete the organization, and override any action. | Business owner, contractor proprietor |
 | **Admin** | Full operational control. Can manage all modules, users, and configurations. Cannot manage billing or delete the organization. | Office manager, operations head |
 | **Supervisor** | Site-level operational access. Can mark attendance, manage workers at assigned sites, and submit expenses. | Site foreman, floor manager, team lead |
@@ -22,7 +22,7 @@ PayMuster enforces strict Role-Based Access Control (RBAC). Every API request is
 **Legend**: ✅ Full Access | 👁️ View Only | 🔒 Own Data Only | ⛔ No Access | ⚡ Scoped (site-level only)
 
 | Module / Action | Owner | Admin | Supervisor | Accountant | Staff | Viewer |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | **Dashboard** | ✅ | ✅ | ⚡ | ✅ (financial) | 🔒 | 👁️ |
 | **Staff — View All** | ✅ | ✅ | ⚡ | 👁️ | ⛔ | 👁️ |
 | **Staff — Create/Edit** | ✅ | ✅ | ⛔ | ⛔ | ⛔ | ⛔ |
@@ -93,21 +93,28 @@ These rules are **absolute and non-overridable**, even by the Owner role:
 ## Authentication Flow
 
 ### Login
-1. User submits email/phone + password.
-2. Server verifies credentials against the `users` table.
-3. Server generates Auth tokens based on client type:
-   - **Web**: JWT (15-minute expiry) + Refresh Token (7-day HTTP-only cookie).
-   - **Mobile**: Persistent 30-day device-bound session token.
-4. Client stores tokens securely.
+
+1. User submits email + password or a verified Google identity token.
+2. Server verifies the identity and current account state against the `users` table.
+3. Server creates one persisted `sessions` row and embeds that row's UUID in both the short-lived access JWT and the refresh JWT.
+4. Client stores tokens securely. Current API responses return tokens in JSON; clients must use platform-appropriate protected storage.
 
 ### Token Refresh & Revocation
-1. **Web**: When JWT expires, client sends the refresh token cookie to `/auth/refresh`. Server validates, issues new JWT, rotates refresh token.
-2. **Mobile**: Uses the 30-day token. If the server revokes the session, the mobile app will be forced to log out on the next sync attempt.
+
+1. Every protected request validates the access JWT and its exact persisted session row. A revoked, expired, missing, user-mismatched, or organization-mismatched session is rejected immediately.
+2. `/auth/refresh` validates the exact session UUID and refresh-token hash, then issues a new short-lived access JWT bound to the same session. Refresh-token rotation is not currently implemented.
+3. Session revocation therefore invalidates both refresh and otherwise-unexpired access tokens on their next server request.
+4. Role and organization authorization are loaded from the current user and session records, not trusted from stale token claims.
+
+### Session-UUID Rollout
+
+Access and refresh tokens issued before session UUID binding do not contain the required `sessionId` claim. They are intentionally rejected after this deployment, causing a one-time sign-in requirement for existing clients. No database reset or migration is required.
 
 ### Logout
-1. Client calls `/auth/logout`.
-2. Server revokes the refresh token in the `sessions` table.
-3. Client discards the JWT from memory.
+
+1. Client calls `/auth/logout`; this endpoint remains available during maintenance mode.
+2. Server revokes the matching refresh-token session in the `sessions` table.
+3. Client discards both tokens from protected storage.
 
 ---
 
@@ -116,7 +123,7 @@ These rules are **absolute and non-overridable**, even by the Owner role:
 Every permission-related event is logged:
 
 | Event | Logged Data |
-|---|---|
+| --- | --- |
 | User login | user_id, IP, device, timestamp |
 | Failed login attempt | email/phone attempted, IP, timestamp |
 | Role change | user_id, old_role, new_role, changed_by, timestamp |
