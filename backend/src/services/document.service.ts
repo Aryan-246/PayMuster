@@ -6,6 +6,7 @@ import { config } from '../lib/config.js';
 import { DocumentStorage, documentStorage } from '../lib/document-storage.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
+import { subscriptionService } from './subscription.service.js';
 
 interface UploadDocumentInput {
     userId: string;
@@ -40,13 +41,41 @@ interface DocumentSummary {
     originalFilename: string | null;
     mimeType: string | null;
     byteSize: number | null;
+    sizeWarning?: boolean;
 }
 
 const extensionByMimeType: Readonly<Record<string, string>> = Object.freeze({
     'application/pdf': 'pdf',
     'image/jpeg': 'jpg',
     'image/png': 'png',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/msword': 'doc',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.ms-powerpoint': 'ppt',
 });
+
+const officeMimeTypes: ReadonlySet<string> = new Set([
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/msword',
+    'application/vnd.ms-excel',
+    'application/vnd.ms-powerpoint',
+]);
+
+type DocumentSizeCategory = 'image' | 'pdf' | 'office';
+
+// Maps an allowlisted MIME type to its configurable size tier. Only known
+// document types reach this (audio/video are rejected earlier); the fallback
+// keeps the most conservative tier for any future allowlist entry.
+function sizeCategoryFor(mimeType: string): DocumentSizeCategory {
+    if (mimeType === 'application/pdf') return 'pdf';
+    if (officeMimeTypes.has(mimeType)) return 'office';
+    if (mimeType.startsWith('image/')) return 'image';
+    return 'image';
+}
 
 function normalizeMimeType(value: string): string {
     return value.split(';', 1)[0].trim().toLowerCase();
@@ -67,6 +96,18 @@ function hasExpectedSignature(mimeType: string, body: Buffer): boolean {
             body[1] === 0xd8 &&
             body[body.length - 2] === 0xff &&
             body[body.length - 1] === 0xd9;
+    }
+    if (officeMimeTypes.has(mimeType)) {
+        // OOXML (docx/xlsx/pptx) are ZIP containers: "PK" + local/empty/spanned marker.
+        if (mimeType.startsWith('application/vnd.openxmlformats-')) {
+            return body.length >= 4 &&
+                body[0] === 0x50 && body[1] === 0x4b &&
+                (body[2] === 0x03 || body[2] === 0x05 || body[2] === 0x07);
+        }
+        // Legacy OLE2 compound files (doc/xls/ppt): D0 CF 11 E0 A1 B1 1A E1.
+        return body.length >= 8 && body.subarray(0, 8).equals(
+            Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+        );
     }
     return false;
 }
@@ -120,23 +161,41 @@ export class DocumentService {
         }
 
         const mimeType = normalizeMimeType(input.mimeType);
+        // Audio and video are served by the separate media-private architecture
+        // and must never be written to the staff-documents-private bucket.
+        if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) {
+            throw new AppError(
+                'DOCUMENT_MEDIA_NOT_ALLOWED',
+                'Audio and video files are handled by the separate media library, not the document store.',
+                415,
+            );
+        }
         if (!config.documentAllowedMimeTypes.includes(mimeType)) {
             throw new AppError(
                 'DOCUMENT_MIME_TYPE_NOT_ALLOWED',
-                'Only configured PDF, JPEG, and PNG documents are accepted.',
+                'This file type is not in the configured document upload allowlist.',
                 415,
             );
         }
         if (input.body.length === 0) {
             throw new AppError('DOCUMENT_EMPTY', 'The uploaded document is empty.', 400);
         }
-        if (input.body.length > config.documentUploadMaxBytes) {
+        // Per-category size tiers (all configurable). The hard cap is clamped to
+        // the bucket-wide maximum so staff-documents-private never stores an
+        // object larger than DOCUMENT_UPLOAD_MAX_BYTES (10 MB).
+        const sizeCategory = sizeCategoryFor(mimeType);
+        const tier = config.documentSizePolicy[sizeCategory];
+        const hardMaxBytes = Math.min(tier.max, config.documentUploadMaxBytes);
+        if (input.body.length > hardMaxBytes) {
             throw new AppError(
                 'DOCUMENT_TOO_LARGE',
-                `Documents must not exceed ${config.documentUploadMaxBytes} bytes.`,
+                `Documents of type ${mimeType} must not exceed ${(hardMaxBytes / (1024 * 1024)).toFixed(0)} MB.`,
                 413,
             );
         }
+        // Soft warning tier: accepted, but surfaced so the client can advise
+        // the user the file is larger than recommended.
+        const sizeWarning = input.body.length > tier.warn;
         if (!hasExpectedSignature(mimeType, input.body)) {
             throw new AppError(
                 'DOCUMENT_CONTENT_INVALID',
@@ -145,8 +204,31 @@ export class DocumentService {
             );
         }
 
-        const expiryDate = this.parseExpiryDate(input.expiryDate);
         const staff = await this.resolveStaff(input.orgId, input.email);
+        
+        // Storage Quota Enforcement
+        const access = await subscriptionService.getFeatureAccess(staff.orgId, 'document_storage_upload');
+        if (!access.allowed) {
+            throw new AppError('STORAGE_QUOTA_EXCEEDED', 'Storage quota exceeded. Please upgrade your plan to upload more documents.', 403);
+        }
+        if (!access.unlimited) {
+            const limit = access.limit ?? 10;
+            const d = new Date();
+            const monthStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
+            const uploadCount = await prisma.auditLog.count({
+                where: {
+                    entityType: 'StaffDocument',
+                    orgId: staff.orgId,
+                    action: 'CREATE',
+                    createdAt: { gte: monthStart },
+                }
+            });
+            if (uploadCount >= limit) {
+                throw new AppError('STORAGE_QUOTA_EXCEEDED', `Free allowance of ${limit} uploads per month reached. Please upgrade to continue.`, 403);
+            }
+        }
+
+        const expiryDate = this.parseExpiryDate(input.expiryDate);
         const documentId = randomUUID();
         const extension = extensionByMimeType[mimeType];
         const storageKey = `${staff.orgId}/${staff.id}/${documentId}.${extension}`;
@@ -157,7 +239,7 @@ export class DocumentService {
 
         try {
             const document = await prisma.$transaction(async (tx) => {
-                await tx.$queryRaw`
+                await tx.$executeRaw`
                     SELECT pg_advisory_xact_lock(
                         hashtextextended(${`staff-document:${staff.orgId}:${staff.id}:${documentType.toLowerCase()}`}, 0)
                     )
@@ -247,13 +329,14 @@ export class DocumentService {
                             mimeType,
                             byteSize: input.body.length,
                             checksumSha256: checksum,
+                            sizeWarning,
                             expiryDate: expiryDate?.toISOString() ?? null,
                         },
                     },
                 });
                 return created;
             });
-            return documentSummary(document);
+            return { ...documentSummary(document), sizeWarning };
         } catch (error) {
             try {
                 await this.storage.remove(storageKey);

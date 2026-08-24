@@ -22,8 +22,12 @@ export const createAttendanceSchema = z
         checkOutTime: dateTimeSchema.optional(),
         checkInLatitude: z.number().min(-90).max(90).optional(),
         checkInLongitude: z.number().min(-180).max(180).optional(),
+        checkInAccuracyMeters: z.number().min(0).max(100).optional(),
+        checkInCapturedAt: dateTimeSchema.optional(),
         checkOutLatitude: z.number().min(-90).max(90).optional(),
         checkOutLongitude: z.number().min(-180).max(180).optional(),
+        checkOutAccuracyMeters: z.number().min(0).max(100).optional(),
+        checkOutCapturedAt: dateTimeSchema.optional(),
         checkInPhotoUrl: z.string().url().max(2048).optional(),
         checkOutPhotoUrl: z.string().url().max(2048).optional(),
         shiftType: shiftTypeSchema.default('REGULAR'),
@@ -32,6 +36,46 @@ export const createAttendanceSchema = z
     })
     .strict()
     .superRefine((value, context) => {
+        const hasCheckInLatitude = value.checkInLatitude !== undefined;
+        const hasCheckInLongitude = value.checkInLongitude !== undefined;
+        const hasCheckOutLatitude = value.checkOutLatitude !== undefined;
+        const hasCheckOutLongitude = value.checkOutLongitude !== undefined;
+
+        if (value.status === 'PRESENT' && (!hasCheckInLatitude || !hasCheckInLongitude)) {
+            context.addIssue({
+                code: 'custom',
+                path: ['checkInLatitude'],
+                message: 'Present attendance requires a server-validated check-in coordinate pair.',
+            });
+        }
+        if (hasCheckInLatitude !== hasCheckInLongitude) {
+            context.addIssue({
+                code: 'custom',
+                path: ['checkInLatitude'],
+                message: 'Check-in latitude and longitude must be supplied together.',
+            });
+        }
+        if (hasCheckOutLatitude !== hasCheckOutLongitude) {
+            context.addIssue({
+                code: 'custom',
+                path: ['checkOutLatitude'],
+                message: 'Check-out latitude and longitude must be supplied together.',
+            });
+        }
+        if ((hasCheckInLatitude || hasCheckInLongitude) && !value.checkInCapturedAt) {
+            context.addIssue({
+                code: 'custom',
+                path: ['checkInCapturedAt'],
+                message: 'Check-in capture time is required when a coordinate pair is supplied.',
+            });
+        }
+        if ((hasCheckOutLatitude || hasCheckOutLongitude) && !value.checkOutCapturedAt) {
+            context.addIssue({
+                code: 'custom',
+                path: ['checkOutCapturedAt'],
+                message: 'Check-out capture time is required when a coordinate pair is supplied.',
+            });
+        }
         if (value.checkInTime && value.checkOutTime && value.checkOutTime < value.checkInTime) {
             context.addIssue({
                 code: 'custom',

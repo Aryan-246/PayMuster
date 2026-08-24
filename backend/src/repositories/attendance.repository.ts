@@ -5,6 +5,7 @@ import {
   SiteStatus,
   StaffStatus,
 } from '../../generated/prisma/index.js';
+import { StoredCoordinateMapsProvider } from '../providers/maps.provider.js';
 import { AppError } from '../lib/app-error.js';
 
 const attendanceInclude = {
@@ -48,8 +49,12 @@ export interface CreateAttendanceData {
   checkOutTime?: Date;
   checkInLatitude?: number;
   checkInLongitude?: number;
+  checkInAccuracyMeters?: number;
+  checkInCapturedAt?: Date;
   checkOutLatitude?: number;
   checkOutLongitude?: number;
+  checkOutAccuracyMeters?: number;
+  checkOutCapturedAt?: Date;
   checkInPhotoUrl?: string;
   checkOutPhotoUrl?: string;
   shiftType: ShiftType;
@@ -82,7 +87,7 @@ export class AttendanceRepository {
             deletedAt: null,
             status: SiteStatus.ACTIVE,
           },
-          select: { id: true },
+          select: { id: true, latitude: true, longitude: true, geoFenceRadius: true },
         }),
         tx.siteAssignment.findFirst({
           where: {
@@ -118,6 +123,34 @@ export class AttendanceRepository {
         throw new AppError('ATTENDANCE_ALREADY_MARKED', 'Attendance has already been marked for this staff member and date.', 409);
       }
 
+      const mapsProvider = new StoredCoordinateMapsProvider(tx);
+      const checkInLocation = data.checkInLatitude !== undefined && data.checkInLongitude !== undefined
+        ? await mapsProvider.validateLocation({
+          organizationId: orgId,
+          siteId: data.siteId,
+          latitude: data.checkInLatitude,
+          longitude: data.checkInLongitude,
+          accuracyMeters: data.checkInAccuracyMeters,
+          capturedAt: data.checkInCapturedAt ?? data.checkInTime ?? new Date(),
+        })
+        : null;
+      const checkOutLocation = data.checkOutLatitude !== undefined && data.checkOutLongitude !== undefined
+        ? await mapsProvider.validateLocation({
+          organizationId: orgId,
+          siteId: data.siteId,
+          latitude: data.checkOutLatitude,
+          longitude: data.checkOutLongitude,
+          accuracyMeters: data.checkOutAccuracyMeters,
+          capturedAt: data.checkOutCapturedAt ?? data.checkOutTime ?? new Date(),
+        })
+        : null;
+
+      for (const location of [checkInLocation, checkOutLocation]) {
+        if (location && !location.valid) {
+          throw new AppError(`ATTENDANCE_LOCATION_${location.reason}`, `Attendance location validation failed: ${location.reason}.`, 400);
+        }
+      }
+
       return tx.attendanceRecord.create({
         data: {
           orgId,
@@ -131,8 +164,16 @@ export class AttendanceRepository {
           ...(data.checkOutTime !== undefined && { checkOutTime: data.checkOutTime }),
           ...(data.checkInLatitude !== undefined && { checkInLatitude: data.checkInLatitude }),
           ...(data.checkInLongitude !== undefined && { checkInLongitude: data.checkInLongitude }),
+          ...(data.checkInAccuracyMeters !== undefined && { checkInAccuracyMeters: data.checkInAccuracyMeters }),
+          ...(data.checkInCapturedAt !== undefined && { checkInCapturedAt: data.checkInCapturedAt }),
+          ...(checkInLocation?.distanceMeters !== null && checkInLocation?.distanceMeters !== undefined && { checkInDistanceMeters: checkInLocation.distanceMeters }),
+          ...(checkInLocation && { checkInLocationValidation: checkInLocation.reason }),
           ...(data.checkOutLatitude !== undefined && { checkOutLatitude: data.checkOutLatitude }),
           ...(data.checkOutLongitude !== undefined && { checkOutLongitude: data.checkOutLongitude }),
+          ...(data.checkOutAccuracyMeters !== undefined && { checkOutAccuracyMeters: data.checkOutAccuracyMeters }),
+          ...(data.checkOutCapturedAt !== undefined && { checkOutCapturedAt: data.checkOutCapturedAt }),
+          ...(checkOutLocation?.distanceMeters !== null && checkOutLocation?.distanceMeters !== undefined && { checkOutDistanceMeters: checkOutLocation.distanceMeters }),
+          ...(checkOutLocation && { checkOutLocationValidation: checkOutLocation.reason }),
           ...(data.checkInPhotoUrl !== undefined && { checkInPhotoUrl: data.checkInPhotoUrl }),
           ...(data.checkOutPhotoUrl !== undefined && { checkOutPhotoUrl: data.checkOutPhotoUrl }),
           ...(data.overtimeHours !== undefined && { overtimeHours: data.overtimeHours }),

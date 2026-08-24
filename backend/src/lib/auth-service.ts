@@ -199,7 +199,7 @@ export class AuthService {
       // The current composite constraint permits duplicate NULL-org emails.
       // Serialize identity creation by normalized email until global uniqueness
       // is enforced by the database migration described in the runbook.
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
 
       const duplicate = await tx.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
@@ -451,7 +451,7 @@ export class AuthService {
       const suppliedName = (payload.name || input.name || '').trim();
       const parts = nameParts(suppliedName || 'Google User');
       const identity = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
 
         const matches = await tx.user.findMany({
           where: { email: { equals: email, mode: 'insensitive' } },

@@ -16,6 +16,11 @@ interface SignedUrlResponse {
 
 type FetchImplementation = typeof fetch;
 
+// Storage requests carry document payloads up to the 10MB hard cap; the timeout
+// must allow a full-size object to transfer over a constrained uplink. A short
+// timeout aborts large-but-valid uploads before they can complete.
+const STORAGE_REQUEST_TIMEOUT_MS = 60_000;
+
 function storageUnavailable(): AppError {
     return new AppError(
         'DOCUMENT_STORAGE_UNAVAILABLE',
@@ -67,8 +72,10 @@ export class DocumentStorage {
         );
 
         if (!response.ok) {
+            const errBody = await response.text().catch(() => '');
             logger.error('document_storage.upload_failed', undefined, {
                 status: response.status,
+                body: errBody
             });
             throw storageUnavailable();
         }
@@ -132,7 +139,7 @@ export class DocumentStorage {
                     authorization: `Bearer ${this.storageConfig.serviceRoleKey}`,
                     ...init.headers,
                 },
-                signal: AbortSignal.timeout(15_000),
+                signal: AbortSignal.timeout(STORAGE_REQUEST_TIMEOUT_MS),
             });
         } catch (error) {
             logger.error('document_storage.request_failed', error);

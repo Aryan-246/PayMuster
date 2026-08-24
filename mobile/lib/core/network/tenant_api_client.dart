@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../features/auth/data/auth_provider.dart';
 import '../env/env.dart';
+import '../observability/observability_reporter.dart';
 
 final tenantApiClientProvider = Provider<TenantApiClient>((ref) {
   final client = TenantApiClient(ref);
@@ -17,11 +18,13 @@ class TenantApiException implements Exception {
     this.message, {
     required this.code,
     this.statusCode,
+    this.requestId,
   });
 
   final String message;
   final String code;
   final int? statusCode;
+  final String? requestId;
 
   @override
   String toString() => message;
@@ -119,13 +122,17 @@ class TenantApiClient {
           code: 'UNSUPPORTED_METHOD',
         ),
       };
-    } on TenantApiException {
+    } on TenantApiException catch (error) {
+      await _report(error, path);
       rethrow;
-    } on http.ClientException {
-      throw const TenantApiException(
+    } on http.ClientException catch (error, stack) {
+      final apiError = TenantApiException(
         'Unable to reach PayMuster. Check your connection and try again.',
         code: 'NETWORK_ERROR',
+        statusCode: null,
       );
+      await _report(apiError, path, error: error, stack: stack);
+      throw apiError;
     }
 
     if (response.statusCode == 401 &&
@@ -140,17 +147,24 @@ class TenantApiClient {
       );
     }
 
-    final decoded = _decode(response);
-    return decoded.containsKey('data') ? decoded['data'] : decoded;
+    try {
+      final decoded = _decode(response);
+      return decoded.containsKey('data') ? decoded['data'] : decoded;
+    } on TenantApiException catch (error) {
+      await _report(error, path);
+      rethrow;
+    }
   }
 
   Map<String, dynamic> _decode(http.Response response) {
+    final requestId = response.headers['x-request-id'];
     final contentType = response.headers['content-type']?.toLowerCase() ?? '';
     if (!contentType.contains('application/json')) {
       throw TenantApiException(
         'The server returned an invalid response (${response.statusCode}).',
         code: 'INVALID_RESPONSE',
         statusCode: response.statusCode,
+        requestId: requestId,
       );
     }
 
@@ -162,6 +176,7 @@ class TenantApiClient {
         'The server returned malformed data (${response.statusCode}).',
         code: 'INVALID_RESPONSE',
         statusCode: response.statusCode,
+        requestId: requestId,
       );
     }
     if (decoded is! Map<String, dynamic>) {
@@ -169,6 +184,7 @@ class TenantApiClient {
         'The server returned an unexpected response (${response.statusCode}).',
         code: 'INVALID_RESPONSE',
         statusCode: response.statusCode,
+        requestId: requestId,
       );
     }
 
@@ -180,8 +196,23 @@ class TenantApiClient {
             'The request failed (${response.statusCode}).',
         code: error?['code'] as String? ?? 'TENANT_REQUEST_FAILED',
         statusCode: response.statusCode,
+        requestId: requestId,
       );
     }
     return decoded;
+  }
+
+  Future<void> _report(
+    TenantApiException apiError,
+    String path, {
+    Object? error,
+    StackTrace? stack,
+  }) {
+    return ObservabilityReporter().reportError(
+      error ?? apiError,
+      stack ?? StackTrace.current,
+      requestId: apiError.requestId,
+      operation: 'tenantApi $path',
+    );
   }
 }

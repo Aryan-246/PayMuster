@@ -1,11 +1,51 @@
 import { Request, Response } from 'express';
+import { AppError } from '../lib/app-error.js';
 import { adminService } from '../services/admin.service.js';
 import { announcementService } from '../services/announcement.service.js';
 import { announcementInvalidationBroker } from '../lib/announcement-invalidation.js';
 import { maintenanceService } from '../lib/maintenance-service.js';
 import { aiService } from '../services/ai.service.js';
+import { providerHealth, redactProviderConfiguration } from '../providers/registry.js';
+import { searchService } from '../providers/search.service.js';
+import { subscriptionService, SubscriptionService } from '../services/subscription.service.js';
 
 export class AdminController {
+  async searchFoundation(req: Request, res: Response) {
+    const actor = req.context.user;
+    if (!actor) {
+      throw new AppError('UNAUTHORIZED', 'Authenticated actor is required.', 401);
+    }
+    const result = await searchService.search({
+      query: typeof req.query.q === 'string' ? req.query.q : '',
+      page: Math.max(1, Number(req.query.page ?? 1)),
+      limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 25))),
+      filters: {
+        role: typeof req.query.role === 'string' ? req.query.role : undefined,
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      },
+      context: {
+        userId: actor.id,
+        role: actor.role,
+        orgId: actor.orgId,
+        permissions: ['manage_system'],
+      },
+    });
+    res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  }
+
+  async getProviderHealth(req: Request, res: Response) {
+    const providers = await providerHealth();
+    res.status(200).json({
+      success: true,
+      data: {
+        providers,
+        configuration: redactProviderConfiguration(),
+        freeOnly: true,
+      },
+      meta: { requestId: req.id },
+    });
+  }
+
   async getDashboard(req: Request, res: Response) {
     const counts = await adminService.getDashboardCounts();
     res.status(200).json({ success: true, data: counts, meta: { requestId: req.id } });
@@ -313,6 +353,58 @@ export class AdminController {
     }
     const result = await adminService.rejectDocument(documentId, adminId, reason);
     res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  }
+
+  // --- Subscription administration ---------------------------------------
+  // Reachable only through the manage_system gate (SUPER_ADMIN); each service
+  // call re-checks the actor role as defense in depth.
+
+  async getSubscriptionSwitch(req: Request, res: Response) {
+    const enabled = SubscriptionService.getGlobalSubscriptionSwitch();
+    res.status(200).json({ success: true, data: { enabled }, meta: { requestId: req.id } });
+  }
+
+  async setSubscriptionSwitch(req: Request, res: Response) {
+    const actor = req.context?.user;
+    if (!actor) {
+      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authenticated actor is required.' } });
+      return;
+    }
+    if (typeof req.body?.enabled !== 'boolean') {
+      throw new AppError('VALIDATION_ERROR', 'A boolean "enabled" field is required.', 400);
+    }
+    const enabled = SubscriptionService.setGlobalSubscriptionSwitch(req.body.enabled, actor.role);
+    res.status(200).json({ success: true, data: { enabled }, meta: { requestId: req.id } });
+  }
+
+  async grantUnlimitedAccess(req: Request, res: Response) {
+    const actor = req.context?.user;
+    if (!actor) {
+      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authenticated actor is required.' } });
+      return;
+    }
+    const orgId = req.params.orgId as string;
+    const subscription = await subscriptionService.grantUnlimitedAccess(orgId, actor.id, actor.role);
+    res.status(200).json({
+      success: true,
+      data: { orgId, subscriptionId: subscription.id, unlimitedAccess: subscription.unlimitedAccess },
+      meta: { requestId: req.id },
+    });
+  }
+
+  async revokeUnlimitedAccess(req: Request, res: Response) {
+    const actor = req.context?.user;
+    if (!actor) {
+      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authenticated actor is required.' } });
+      return;
+    }
+    const orgId = req.params.orgId as string;
+    const subscription = await subscriptionService.revokeUnlimitedAccess(orgId, actor.id, actor.role);
+    res.status(200).json({
+      success: true,
+      data: { orgId, subscriptionId: subscription.id, unlimitedAccess: subscription.unlimitedAccess },
+      meta: { requestId: req.id },
+    });
   }
 }
 

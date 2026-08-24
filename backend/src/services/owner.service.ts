@@ -36,7 +36,7 @@ export class OwnerService {
     for (let attempt = 1; attempt <= OWNER_REQUEST_TRANSACTION_ATTEMPTS; attempt += 1) {
       try {
         return await prisma.$transaction(async (tx) => {
-          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`owner-request:${userId}`}, 0))`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`owner-request:${userId}`}, 0))`;
 
           const user = await tx.user.findFirst({
             where: {

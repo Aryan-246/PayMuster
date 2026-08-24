@@ -6,6 +6,7 @@ import { auditMiddleware } from '../middlewares/audit.middleware.js';
 import { validateParams, validateRequest } from '../middlewares/validation.middleware.js';
 import { dispatchAnnouncementSchema } from '../schemas/announcement.schema.js';
 import { adminAiChatSchema } from '../schemas/admin-ai.schema.js';
+import { rateLimit } from '../lib/rate-limit.js';
 import {
     adminDocumentParamsSchema,
     adminDocumentRejectSchema,
@@ -13,10 +14,16 @@ import {
 } from '../schemas/document.schema.js';
 
 const router = Router();
+const providerHealthRateLimit = rateLimit(60_000, 30, {
+    keyPrefix: 'admin-provider-health',
+    keyGenerator: (request) => request.context?.user?.id ?? request.ip ?? 'unknown',
+});
 
 router.use(requireAuth);
 router.use(requirePermission('manage_system'));
 
+router.get('/providers/health', providerHealthRateLimit, adminController.getProviderHealth.bind(adminController));
+router.get('/search', auditMiddleware, adminController.searchFoundation.bind(adminController));
 router.get('/dashboard', auditMiddleware, adminController.getDashboard.bind(adminController));
 
 router.get('/users', auditMiddleware, adminController.searchUsers.bind(adminController));
@@ -49,6 +56,12 @@ router.post(
 router.get('/maintenance', auditMiddleware, adminController.getMaintenance.bind(adminController));
 router.post('/maintenance/enable', auditMiddleware, adminController.enableMaintenance.bind(adminController));
 router.post('/maintenance/disable', auditMiddleware, adminController.disableMaintenance.bind(adminController));
+
+// Subscription administration (SUPER_ADMIN via the manage_system gate above).
+router.get('/subscription/switch', auditMiddleware, adminController.getSubscriptionSwitch.bind(adminController));
+router.post('/subscription/switch', auditMiddleware, adminController.setSubscriptionSwitch.bind(adminController));
+router.post('/subscription/orgs/:orgId/unlimited', auditMiddleware, adminController.grantUnlimitedAccess.bind(adminController));
+router.delete('/subscription/orgs/:orgId/unlimited', auditMiddleware, adminController.revokeUnlimitedAccess.bind(adminController));
 
 router.post(
     '/ai/chat',

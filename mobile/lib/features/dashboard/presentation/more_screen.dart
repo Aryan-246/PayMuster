@@ -52,6 +52,8 @@ class MoreScreen extends ConsumerWidget {
                   _buildListTile(context, Icons.person_add, 'Join Requests', '/app/join-requests', textColor),
                 if (role == UserRole.owner || role == UserRole.superAdmin)
                   _buildListTile(context, Icons.business, 'Company & Join Code', '/app/company-info', textColor),
+                if (role == UserRole.owner)
+                  _buildListTile(context, Icons.receipt_long, 'Billing', '/app/billing', textColor),
               ],
             ),
           _buildSection(

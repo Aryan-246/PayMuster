@@ -3,6 +3,7 @@ import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js';
 import { AppError } from './app-error.js';
 import { config } from './config.js';
 import { logger, maskEmail } from './logger.js';
+import type { EmailMessage, EmailProvider, ProviderHealth } from '../providers/contracts.js';
 
 export interface EmailTemplateData {
   name?: string;
@@ -398,6 +399,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface EmailServiceOptions {
+  transporter?: Pick<Transporter, 'sendMail' | 'verify'> | null;
+  enabled?: boolean;
+  emailFrom?: string;
+  sleep?: (milliseconds: number) => Promise<void>;
+}
+
 function parseBrowserName(userAgent?: string): string {
   if (!userAgent) return 'Unknown browser';
   if (userAgent.includes('Edg/')) return 'Microsoft Edge';
@@ -410,36 +418,113 @@ function parseBrowserName(userAgent?: string): string {
 }
 
 export class EmailService {
-  private readonly transporter: Transporter | null;
+  private readonly transporter: Pick<Transporter, 'sendMail' | 'verify'> | null;
+  private readonly enabled: boolean;
+  private readonly emailFrom: string;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
 
-  constructor() {
-    this.transporter =
-      config.emailUser && config.emailAppPassword
+  constructor(options: EmailServiceOptions = {}) {
+    this.enabled = options.enabled ?? config.smtpEnabled;
+    this.emailFrom = options.emailFrom ?? config.emailFrom;
+    this.sleep = options.sleep ?? sleep;
+    this.transporter = options.transporter !== undefined
+      ? options.transporter
+      : this.enabled && config.emailUser && config.emailAppPassword
         ? nodemailer.createTransport({
-            host: config.smtpHost,
-            port: config.smtpPort,
-            secure: config.smtpSecure,
-            auth: {
-              user: config.emailUser,
-              pass: config.emailAppPassword,
-            },
-            pool: true,
-            maxConnections: 5,
-            maxMessages: 100,
-            connectionTimeout: 10_000,
-            greetingTimeout: 10_000,
-            socketTimeout: 20_000,
-            tls: { minVersion: 'TLSv1.2' },
-          })
+          host: config.smtpHost,
+          port: config.smtpPort,
+          secure: config.smtpSecure,
+          auth: {
+            user: config.emailUser,
+            pass: config.emailAppPassword,
+          },
+          pool: true,
+          maxConnections: 5,
+          maxMessages: 100,
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 20_000,
+          tls: { minVersion: 'TLSv1.2' },
+        })
         : null;
   }
 
   get isConfigured(): boolean {
-    return this.transporter !== null && Boolean(config.emailFrom);
+    return this.transporter !== null && Boolean(this.emailFrom);
+  }
+
+  async health(): Promise<ProviderHealth> {
+    const configured = this.isConfigured;
+    return {
+      provider: 'smtp',
+      kind: 'EMAIL',
+      status: this.enabled && configured ? 'UNAVAILABLE' : 'DISABLED',
+      readiness: !this.enabled
+        ? 'DISABLED'
+        : configured
+          ? 'READY'
+          : 'MISSING_CONFIGURATION',
+      enabled: config.smtpEnabled,
+      fallback: 'in-app-notification',
+      checkedAt: new Date().toISOString(),
+      detail: this.enabled && configured
+        ? 'SMTP is configured; message delivery is verified per send attempt.'
+        : 'Email delivery is optional and remains non-transaction-critical.',
+    };
+  }
+
+  async send(message: EmailMessage): Promise<'SENT' | 'SKIPPED' | 'UNAVAILABLE'> {
+    if (!this.enabled || !this.transporter || !this.emailFrom) {
+      logger.warn('email.provider_skipped', {
+        eventId: message.eventId,
+        recipient: maskEmail(message.to),
+        reason: 'SMTP_NOT_CONFIGURED',
+      });
+      return 'SKIPPED';
+    }
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        const result: SMTPTransport.SentMessageInfo = await this.transporter.sendMail({
+          from: this.emailFrom,
+          to: message.to,
+          subject: message.subject,
+          html: message.html,
+          text: message.text,
+          headers: { 'X-PayMuster-Event-Id': message.eventId },
+        });
+        logger.info('email.provider_sent', {
+          eventId: message.eventId,
+          recipient: maskEmail(message.to),
+          messageId: result.messageId,
+          attempt,
+        });
+        return 'SENT';
+      } catch (error) {
+        lastError = error;
+        logger.error('email.provider_send_attempt_failed', error, {
+          eventId: message.eventId,
+          recipient: maskEmail(message.to),
+          attempt,
+          maxAttempts: MAX_RETRY_ATTEMPTS,
+        });
+        if (attempt < MAX_RETRY_ATTEMPTS) {
+          await this.sleep(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1));
+        }
+      }
+    }
+
+    logger.error('email.provider_unavailable', lastError, {
+      eventId: message.eventId,
+      recipient: maskEmail(message.to),
+      totalAttempts: MAX_RETRY_ATTEMPTS,
+    });
+    return 'UNAVAILABLE';
   }
 
   async verifyConnection(): Promise<boolean> {
-    if (!this.transporter) {
+    if (!this.enabled || !this.transporter) {
       logger.warn('email.smtp_not_configured');
       return false;
     }
@@ -462,7 +547,7 @@ export class EmailService {
   }
 
   async sendVerificationEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('verification', to, 'Verify your PayMuster account', data);
+    await this.sendTemplate('verification', to, 'Verify your PayMuster account', data);
   }
 
   async sendAccountCreatedNotification(to: string, data: EmailTemplateData): Promise<void> {
@@ -470,40 +555,40 @@ export class EmailService {
   }
 
   async sendAccountDeletionEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('account-deletion', to, '⚠️ Permanent Account Deletion Verification', data);
+    await this.sendTemplate('account-deletion', to, '⚠️ Permanent Account Deletion Verification', data);
   }
 
   async sendPasswordResetEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('password-reset', to, 'Reset your PayMuster password', data);
+    await this.sendTemplate('password-reset', to, 'Reset your PayMuster password', data);
   }
 
   async sendWelcomeEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('welcome', to, 'Welcome to PayMuster!', data);
+    await this.sendTemplate('welcome', to, 'Welcome to PayMuster!', data);
   }
 
   async sendPasswordChangedEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('password-changed', to, 'Your PayMuster password was changed', data);
+    await this.sendTemplate('password-changed', to, 'Your PayMuster password was changed', data);
   }
 
   async sendLoginNotificationEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('login-alert', to, 'New sign-in to PayMuster', data);
+    await this.sendTemplate('login-alert', to, 'New sign-in to PayMuster', data);
   }
 
   async sendGoogleLoginNotificationEmail(to: string, data: EmailTemplateData): Promise<void> {
-    await this.send('google-login', to, 'Google sign-in to PayMuster', data);
+    await this.sendTemplate('google-login', to, 'Google sign-in to PayMuster', data);
   }
 
   static parseBrowserName(userAgent?: string): string {
     return parseBrowserName(userAgent);
   }
 
-  private async send(
+  private async sendTemplate(
     template: EmailTemplate,
     to: string,
     subject: string,
     data: EmailTemplateData,
   ): Promise<void> {
-    if (!this.transporter || !config.emailFrom) {
+    if (!this.enabled || !this.transporter || !this.emailFrom) {
       throw new AppError(
         'EMAIL_NOT_CONFIGURED',
         'Email delivery is not configured. Please contact support.',
@@ -518,7 +603,7 @@ export class EmailService {
     for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
       try {
         const result: SMTPTransport.SentMessageInfo = await this.transporter.sendMail({
-          from: config.emailFrom,
+          from: this.emailFrom,
           to,
           subject,
           html: rendered.html,
@@ -555,7 +640,7 @@ export class EmailService {
 
         if (attempt < MAX_RETRY_ATTEMPTS) {
           const delayMs = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-          await sleep(delayMs);
+          await this.sleep(delayMs);
         }
       }
     }

@@ -38,12 +38,17 @@ model Organization {
   materialTransactions MaterialTransaction[]
   materials            Material[]
   notifications        Notification[]
+  deviceTokens         DeviceToken[]
+  notificationDeliveries NotificationDelivery[]
   announcementCampaigns AnnouncementCampaign[]
   payCycles             PayCycle[]
   payRunItems          PayRunItem[]
   payRuns              PayRun[]
   paymentApprovals     PaymentApproval[]
   payments             Payment[]
+  financialAllocations FinancialAllocation[]
+  expenseApprovals     ExpenseApproval[]
+  financialEvidence    FinancialEvidence[]
   promotionRequests    PromotionRequest[]
   salaryRules          SalaryRule[]
   sessions             Session[]
@@ -57,6 +62,11 @@ model Organization {
   users                User[]
   vendorPayments       VendorPayment[]
   vendors              Vendor[]
+  subscriptions        Subscription[]
+  invoices             Invoice[]
+  paymentEvents        PaymentEvent[]
+  usageRecords         UsageRecord[]
+  entitlements         Entitlement[]
 
   @@index([name], map: "idx_organizations_name")
   @@map("organizations")
@@ -97,7 +107,12 @@ model User {
   expensesPaid         Expense[]
   invitationsSent      Invitation[]
   notifications        Notification[]
-  ownerRequests        OwnerRequest[]
+  deviceTokens          DeviceToken[]
+  ownerRequests         OwnerRequest[]
+  subscriptionChanges  Subscription[] @relation("SubscriptionChangedBy")
+  createdAllocations   FinancialAllocation[] @relation("FinancialAllocationCreatedBy")
+  expenseApprovals     ExpenseApproval[] @relation("ExpenseApprovalActor")
+  uploadedEvidence     FinancialEvidence[] @relation("FinancialEvidenceUploadedBy")
   approvedPayRuns      PayRun[]             @relation("PayRunApprovedBy")
   paymentApprovals     PaymentApproval[]
   approvedPayments     Payment[]            @relation("PaymentApprovedBy")
@@ -356,6 +371,7 @@ model Site {
   assets               Asset[]
   attendanceRecords    AttendanceRecord[]
   expenses             Expense[]
+  financialAllocations FinancialAllocation[]
   materialStock        MaterialStock[]
   materialTransactions MaterialTransaction[]
   siteAssignments      SiteAssignment[]
@@ -394,20 +410,28 @@ model SiteAssignment {
 }
 
 model AttendanceRecord {
-  id                 String              @id @default(uuid()) @db.Uuid
-  orgId              String              @db.Uuid
-  staffId            String              @db.Uuid
-  siteId             String              @db.Uuid
-  date               DateTime            @db.Timestamptz(6)
-  status             AttendanceStatus
-  checkInTime        DateTime?           @db.Timestamptz(6)
-  checkOutTime       DateTime?           @db.Timestamptz(6)
-  checkInLatitude    Float?
-  checkInLongitude   Float?
-  checkOutLatitude   Float?
-  checkOutLongitude  Float?
-  checkInPhotoUrl    String?
-  checkOutPhotoUrl   String?
+  id                        String              @id @default(uuid()) @db.Uuid
+  orgId                     String              @db.Uuid
+  staffId                   String              @db.Uuid
+  siteId                    String              @db.Uuid
+  date                      DateTime            @db.Timestamptz(6)
+  status                    AttendanceStatus
+  checkInTime               DateTime?           @db.Timestamptz(6)
+  checkOutTime              DateTime?           @db.Timestamptz(6)
+  checkInLatitude           Float?
+  checkInLongitude          Float?
+  checkInAccuracyMeters     Float?
+  checkInCapturedAt         DateTime?           @db.Timestamptz(6)
+  checkInDistanceMeters     Float?
+  checkInLocationValidation String?
+  checkOutLatitude          Float?
+  checkOutLongitude         Float?
+  checkOutAccuracyMeters    Float?
+  checkOutCapturedAt        DateTime?           @db.Timestamptz(6)
+  checkOutDistanceMeters    Float?
+  checkOutLocationValidation String?
+  checkInPhotoUrl            String?
+  checkOutPhotoUrl           String?
   shiftType          ShiftType
   overtimeHours      Float?
   markedById         String?             @db.Uuid
@@ -490,8 +514,10 @@ model PayRun {
   deleteReason String?
   deletedBy    String?      @db.Uuid
   publicId     String?      @unique
-  payRunItems  PayRunItem[]
-  approvedBy   User?        @relation("PayRunApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  payRunItems          PayRunItem[]
+  financialAllocations FinancialAllocation[] @relation("AllocationPayRun")
+  financialEvidence    FinancialEvidence[]
+  approvedBy           User?        @relation("PayRunApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   org          Organization @relation(fields: [orgId], references: [id])
   payCycle     PayCycle     @relation(fields: [payCycleId], references: [id])
 
@@ -542,8 +568,10 @@ model Payment {
   deletedAt        DateTime?         @db.Timestamptz(6)
   deleteReason     String?
   deletedBy        String?           @db.Uuid
-  paymentApprovals PaymentApproval[]
-  approvedBy       User?             @relation("PaymentApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  paymentApprovals     PaymentApproval[]
+  financialAllocations FinancialAllocation[] @relation("AllocationPayment")
+  financialEvidence    FinancialEvidence[] @relation("EvidencePayment")
+  approvedBy           User?             @relation("PaymentApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   org              Organization      @relation(fields: [orgId], references: [id])
   staff            Staff             @relation(fields: [staffId], references: [id])
 
@@ -608,9 +636,12 @@ model Expense {
   siteId        String?       @db.Uuid
   paidById      String?       @db.Uuid
   paymentMethod String
-  status        ExpenseStatus
-  receiptUrl    String?
-  notes         String?
+  status              ExpenseStatus
+  receiptUrl          String?
+  notes               String?
+  financialAllocations FinancialAllocation[] @relation("AllocationExpense")
+  approvals           ExpenseApproval[]
+  evidence            FinancialEvidence[] @relation("EvidenceExpense")
   createdAt     DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
   deletedAt     DateTime?     @db.Timestamptz(6)
@@ -837,10 +868,57 @@ model Notification {
   org          Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
   user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   campaign     AnnouncementCampaign? @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  deliveries   NotificationDelivery[]
 
   @@index([orgId], map: "idx_notifications_org_id")
   @@index([userId], map: "idx_notifications_user_id")
   @@map("notifications")
+}
+
+model DeviceToken {
+  id                  String       @id @default(uuid()) @db.Uuid
+  orgId               String       @db.Uuid
+  userId              String       @db.Uuid
+  token               String       @unique
+  platform            PushPlatform
+  appVersion          String?
+  deviceId            String?
+  lastSeenAt          DateTime     @default(now()) @db.Timestamptz(6)
+  invalidatedAt       DateTime?    @db.Timestamptz(6)
+  invalidationReason  String?
+  createdAt           DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(6)
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries          NotificationDelivery[]
+
+  @@index([orgId, userId], map: "idx_device_tokens_org_user")
+  @@index([userId, invalidatedAt], map: "idx_device_tokens_user_active")
+  @@map("device_tokens")
+}
+
+model NotificationDelivery {
+  id             String                 @id @default(uuid()) @db.Uuid
+  orgId          String                 @db.Uuid
+  notificationId String                 @db.Uuid
+  deviceTokenId  String                 @db.Uuid
+  status         PushDeliveryStatus     @default(PENDING)
+  provider       String?
+  providerMessageId String?
+  attempts       Int                    @default(0)
+  lastAttemptAt  DateTime?              @db.Timestamptz(6)
+  deliveredAt    DateTime?              @db.Timestamptz(6)
+  errorCode      String?
+  createdAt      DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime               @updatedAt @db.Timestamptz(6)
+  org            Organization           @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  notification   Notification           @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  deviceToken    DeviceToken            @relation(fields: [deviceTokenId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, deviceTokenId], map: "uq_notification_deliveries_notification_token")
+  @@index([orgId, status], map: "idx_notification_deliveries_org_status")
+  @@index([notificationId], map: "idx_notification_deliveries_notification")
+  @@map("notification_deliveries")
 }
 
 model SyncQueue {
@@ -1021,6 +1099,46 @@ model PublicIdSequence {
 
   @@unique([entityType, prefix], map: "uq_publicid_seq_entity_prefix")
   @@map("public_id_sequences")
+}
+
+enum AllocationType {
+  SITE
+  COMPANY
+  PAYROLL
+}
+
+enum ExpenseApprovalAction {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum PlanInterval {
+  MONTH
+  YEAR
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum PaymentEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
 }
 
 enum UserStatus {
@@ -1207,6 +1325,19 @@ enum MaterialTransactionType {
   RETURN
 }
 
+enum PushPlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+enum PushDeliveryStatus {
+  PENDING
+  SENT
+  INVALID_TOKEN
+  FAILED
+}
+
 enum SyncStatus {
   PENDING
   SYNCED
@@ -1221,4 +1352,209 @@ model SystemSettings {
   updatedBy String?  @db.Uuid
 
   @@map("system_settings")
+}
+
+model FinancialAllocation {
+  id          String              @id @default(uuid()) @db.Uuid
+  orgId       String              @db.Uuid
+  amount      Decimal
+  allocationType AllocationType
+  expenseId   String?             @db.Uuid
+  paymentId   String?             @db.Uuid
+  payRunId    String?             @db.Uuid
+  siteId      String?             @db.Uuid
+  createdById String              @db.Uuid
+  notes       String?
+  createdAt   DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(6)
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  expense     Expense?            @relation("AllocationExpense", fields: [expenseId], references: [id], onDelete: Restrict)
+  payment     Payment?            @relation("AllocationPayment", fields: [paymentId], references: [id], onDelete: Restrict)
+  payRun      PayRun?             @relation("AllocationPayRun", fields: [payRunId], references: [id], onDelete: Restrict)
+  site        Site?               @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  createdBy   User                @relation("FinancialAllocationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([orgId, allocationType], map: "idx_financial_allocations_org_type")
+  @@index([expenseId], map: "idx_financial_allocations_expense_id")
+  @@index([paymentId], map: "idx_financial_allocations_payment_id")
+  @@index([payRunId], map: "idx_financial_allocations_pay_run_id")
+  @@index([siteId], map: "idx_financial_allocations_site_id")
+  @@map("financial_allocations")
+}
+
+model ExpenseApproval {
+  id         String                @id @default(uuid()) @db.Uuid
+  orgId      String                @db.Uuid
+  expenseId  String                @db.Uuid
+  action     ExpenseApprovalAction
+  actorId    String                @db.Uuid
+  notes      String?
+  createdAt  DateTime              @default(now()) @db.Timestamptz(6)
+  org        Organization          @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  expense    Expense               @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  actor      User                  @relation("ExpenseApprovalActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, expenseId], map: "idx_expense_approvals_org_expense")
+  @@index([actorId], map: "idx_expense_approvals_actor_id")
+  @@map("expense_approvals")
+}
+
+model FinancialEvidence {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @db.Uuid
+  expenseId    String?  @db.Uuid
+  paymentId    String?  @db.Uuid
+  payRunId     String?  @db.Uuid
+  storageKey   String
+  sha256       String
+  mimeType     String
+  byteSize     Int
+  uploadedById String   @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  expense      Expense? @relation("EvidenceExpense", fields: [expenseId], references: [id], onDelete: Restrict)
+  payment      Payment? @relation("EvidencePayment", fields: [paymentId], references: [id], onDelete: Restrict)
+  payRun       PayRun? @relation(fields: [payRunId], references: [id], onDelete: Restrict)
+  uploadedBy   User @relation("FinancialEvidenceUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([orgId], map: "idx_financial_evidence_org_id")
+  @@index([expenseId], map: "idx_financial_evidence_expense_id")
+  @@index([paymentId], map: "idx_financial_evidence_payment_id")
+  @@index([payRunId], map: "idx_financial_evidence_pay_run_id")
+  @@map("financial_evidence")
+}
+
+model Plan {
+  id                String         @id @default(uuid()) @db.Uuid
+  code              String         @unique
+  name              String
+  description       String?
+  amountMinor       BigInt
+  currency          String         @default("INR")
+  interval          PlanInterval   @default(MONTH)
+  trialDays         Int            @default(0)
+  featureLimits     Json
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
+  subscriptions     Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                    String             @id @default(uuid()) @db.Uuid
+  orgId                 String             @db.Uuid
+  planId                String             @db.Uuid
+  status                SubscriptionStatus @default(TRIALING)
+  provider              String             @default("razorpay")
+  providerCustomerId    String?
+  providerSubscriptionId String?
+  currentPeriodStart    DateTime           @db.Timestamptz(6)
+  currentPeriodEnd      DateTime           @db.Timestamptz(6)
+  trialEndsAt           DateTime?          @db.Timestamptz(6)
+  cancelAtPeriodEnd      Boolean            @default(false)
+  unlimitedAccess       Boolean            @default(false)
+  changedById            String?            @db.Uuid
+  createdAt             DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(6)
+  org                   Organization       @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  plan                  Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  changedBy             User?              @relation("SubscriptionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+  entitlements          Entitlement[]
+  usageRecords          UsageRecord[]
+  invoices              Invoice[]
+  paymentEvents         PaymentEvent[]
+
+  @@index([orgId, status], map: "idx_subscriptions_org_status")
+  @@index([planId], map: "idx_subscriptions_plan_id")
+  @@index([providerSubscriptionId], map: "idx_subscriptions_provider_id")
+  @@map("subscriptions")
+}
+
+model Entitlement {
+  id             String        @id @default(uuid()) @db.Uuid
+  orgId          String        @db.Uuid
+  subscriptionId String?       @db.Uuid
+  key            String
+  value          Json
+  source         String        @default("PLAN")
+  expiresAt      DateTime?     @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  org            Organization  @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, key], map: "uq_entitlements_org_key")
+  @@index([subscriptionId], map: "idx_entitlements_subscription_id")
+  @@map("entitlements")
+}
+
+model UsageRecord {
+  id             String        @id @default(uuid()) @db.Uuid
+  orgId          String        @db.Uuid
+  subscriptionId String?       @db.Uuid
+  metric         String
+  periodStart    DateTime      @db.Timestamptz(6)
+  periodEnd      DateTime      @db.Timestamptz(6)
+  quantity       Decimal       @default(0)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  org            Organization  @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, metric, periodStart, periodEnd], map: "uq_usage_org_metric_period")
+  @@index([orgId, metric], map: "idx_usage_org_metric")
+  @@index([subscriptionId], map: "idx_usage_subscription_id")
+  @@map("usage_records")
+}
+
+model Invoice {
+  id                 String          @id @default(uuid()) @db.Uuid
+  orgId              String          @db.Uuid
+  subscriptionId     String?         @db.Uuid
+  invoiceNumber        String
+  providerInvoiceId    String?
+  providerOrderId      String?
+  status               InvoiceStatus      @default(DRAFT)
+  subtotalMinor      BigInt
+  taxMinor           BigInt          @default(0)
+  totalMinor         BigInt
+  currency           String          @default("INR")
+  issuedAt           DateTime        @default(now()) @db.Timestamptz(6)
+  dueAt              DateTime?       @db.Timestamptz(6)
+  paidAt             DateTime?       @db.Timestamptz(6)
+  createdAt          DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @db.Timestamptz(6)
+  org                Organization    @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  subscription       Subscription?   @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, invoiceNumber], map: "uq_invoices_org_number")
+  @@unique([providerInvoiceId], map: "uq_invoices_provider_id")
+  @@unique([providerOrderId], map: "uq_invoices_provider_order_id")
+  @@index([orgId, status], map: "idx_invoices_org_status")
+  @@index([subscriptionId], map: "idx_invoices_subscription_id")
+  @@map("invoices")
+}
+
+model PaymentEvent {
+  id                   String             @id @default(uuid()) @db.Uuid
+  orgId                String?            @db.Uuid
+  subscriptionId       String?            @db.Uuid
+  provider             String
+  providerEventId      String
+  eventType            String
+  payload              Json
+  status                PaymentEventStatus @default(RECEIVED)
+  processedAt          DateTime?          @db.Timestamptz(6)
+  failureReason        String?
+  createdAt            DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(6)
+  org                  Organization?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  subscription         Subscription?     @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerEventId], map: "uq_payment_events_provider_event")
+  @@index([orgId, status], map: "idx_payment_events_org_status")
+  @@index([subscriptionId], map: "idx_payment_events_subscription_id")
+  @@map("payment_events")
 }

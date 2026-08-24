@@ -89,6 +89,22 @@ class AdminApiClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> getProviderHealth() async {
+    final res = await _get('/admin/providers/health');
+    final data = res['data'];
+    if (data is! Map<String, dynamic>) {
+      throw Exception('The server returned invalid provider health data.');
+    }
+    final providers = data['providers'];
+    if (providers is! List) {
+      throw Exception('The server returned invalid provider health data.');
+    }
+    return {
+      'providers': providers.cast<Map<String, dynamic>>(),
+      'freeOnly': data['freeOnly'] == true,
+    };
+  }
+
   Future<AdminDashboardMetrics> getDashboardMetrics() async {
     final res = await _get('/admin/dashboard');
     return AdminDashboardMetrics.fromJson(res['data'] as Map<String, dynamic>);

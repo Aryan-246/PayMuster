@@ -11,7 +11,7 @@ Designed to feel like **Stripe meets Linear** — industrial, premium, minimal, 
 ## Core Pillars
 
 | Pillar | Description |
-|---|---|
+| --- | --- |
 | **Staff** | Complete worker profiles with rates, documents, history, and payment records |
 | **Sites** | Construction site management with geo-fencing and worker assignment |
 | **Attendance** | GPS + photo proof check-in/check-out with supervisor verification |
@@ -26,7 +26,7 @@ Designed to feel like **Stripe meets Linear** — industrial, premium, minimal, 
 ## User Roles
 
 | Role | Access Level |
-|---|---|
+| --- | --- |
 | **Owner** | Full system control, billing, organization settings |
 | **Admin** | Manage all modules, users, and configurations |
 | **Supervisor** | Site-level attendance, worker management, and approvals |
@@ -37,7 +37,7 @@ Designed to feel like **Stripe meets Linear** — industrial, premium, minimal, 
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | **Mobile App** | Flutter (Dart) — offline-first, field-optimized |
 | **Web Dashboard** | React + TypeScript — admin-focused |
 | **Backend API** | Node.js (Express/Fastify) + TypeScript |
@@ -82,8 +82,34 @@ Refer to the `/docs` directory for the complete architectural specification. Eve
 3. If architecture needs improvement — stop, explain, improve first.
 4. Treat this project like software that will be maintained for 10 years.
 
-
-
 To run the flutter web on a custom port run the following command:
 
+flutter analyze
+flutter test
+flutter pub y
+
 flutter run -d chrome --web-hostname localhost --web-port 7357
+
+cd backend:
+
+npm install
+npm run build
+npm run dev
+
+netstat -ano | findstr :4000
+
+taskkill /PID <PID> /F
+
+-
+
+npx prisma format
+npx prisma validate
+npx prisma generate
+
+npx prisma migrate dev --name your_change
+
+to frontend run:
+
+cd frontend
+npm install
+npm run dev

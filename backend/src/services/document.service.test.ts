@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import test, { afterEach } from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 
 import { AppError } from '../lib/app-error.js';
 import type { DocumentStorage } from '../lib/document-storage.js';
 import { prisma } from '../lib/prisma.js';
 import { DocumentService } from './document.service.js';
+import { subscriptionService } from './subscription.service.js';
 
 const staffDelegate = prisma.staff as unknown as {
     findMany: typeof prisma.staff.findMany;
@@ -15,9 +16,13 @@ const documentDelegate = prisma.staffDocument as unknown as {
 const mutablePrisma = prisma as unknown as {
     $transaction: typeof prisma.$transaction;
 };
+const subscriptionDelegate = subscriptionService as unknown as {
+    getFeatureAccess: typeof subscriptionService.getFeatureAccess;
+};
 const originalStaffFindMany = staffDelegate.findMany;
 const originalDocumentFindFirst = documentDelegate.findFirst;
 const originalTransaction = mutablePrisma.$transaction;
+const originalGetFeatureAccess = subscriptionDelegate.getFeatureAccess;
 
 const orgId = '11111111-1111-4111-8111-111111111111';
 const staffId = '22222222-2222-4222-8222-222222222222';
@@ -43,10 +48,28 @@ function validPdf(): Buffer {
     return Buffer.from('%PDF-1.7\nminimal test document');
 }
 
+function pngOfSize(totalBytes: number): Buffer {
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const padding = Buffer.alloc(Math.max(0, totalBytes - signature.length), 0x20);
+    return Buffer.concat([signature, padding]);
+}
+
+beforeEach(() => {
+    // Grant the storage entitlement by default so upload-path tests exercise the
+    // document behavior under test rather than the subscription quota gate.
+    subscriptionDelegate.getFeatureAccess = (async () => ({
+        allowed: true,
+        unlimited: true,
+        limit: null,
+        source: 'SUBSCRIPTION',
+    })) as typeof subscriptionService.getFeatureAccess;
+});
+
 afterEach(() => {
     staffDelegate.findMany = originalStaffFindMany;
     documentDelegate.findFirst = originalDocumentFindFirst;
     mutablePrisma.$transaction = originalTransaction;
+    subscriptionDelegate.getFeatureAccess = originalGetFeatureAccess;
 });
 
 test('document upload rejects content that does not match its declared MIME type before storage access', async () => {
@@ -169,7 +192,7 @@ test('successful upload stores a generated private key and audit metadata atomic
         },
     }));
     const transactionClient = {
-        $queryRaw: async () => undefined,
+        $executeRaw: async () => undefined,
         staffDocument: {
             findFirst: async () => null,
             create: async (args: any) => {
@@ -240,7 +263,7 @@ test('an active review blocks duplicate uploads and compensates the uploaded obj
         },
     }));
     const transactionClient = {
-        $queryRaw: async () => {
+        $executeRaw: async () => {
             calls.push('advisory-lock');
             return undefined;
         },
@@ -281,7 +304,7 @@ test('a rejected document history does not block a new submission', async () => 
         },
     }));
     const transactionClient = {
-        $queryRaw: async () => {
+        $executeRaw: async () => {
             calls.push('advisory-lock');
             return undefined;
         },
@@ -345,4 +368,106 @@ test('a cross-owner view request returns not found without asking storage to sig
         (error) => assertAppError(error, { code: 'DOCUMENT_NOT_FOUND', status: 404 }),
     );
     assert.equal(signerCalled, false);
+});
+
+test('audio and video are rejected before storage and kept out of the document bucket', async () => {
+    let storageCalled = false;
+    const service = new DocumentService(storageStub({
+        upload: async () => {
+            storageCalled = true;
+        },
+    }));
+
+    for (const mimeType of ['video/mp4', 'audio/mpeg']) {
+        await assert.rejects(
+            service.upload({
+                userId,
+                orgId,
+                email: 'worker@example.com',
+                documentType: 'Identity Proof',
+                mimeType,
+                body: Buffer.from([0x00, 0x01, 0x02, 0x03]),
+            }),
+            (error) => assertAppError(error, { code: 'DOCUMENT_MEDIA_NOT_ALLOWED', status: 415 }),
+        );
+    }
+    assert.equal(storageCalled, false);
+});
+
+test('office document types are not accepted under the default allowlist', async () => {
+    let storageCalled = false;
+    const service = new DocumentService(storageStub({
+        upload: async () => {
+            storageCalled = true;
+        },
+    }));
+
+    await assert.rejects(
+        service.upload({
+            userId,
+            orgId,
+            email: 'worker@example.com',
+            documentType: 'Offer Letter',
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            body: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]),
+        }),
+        (error) => assertAppError(error, { code: 'DOCUMENT_MIME_TYPE_NOT_ALLOWED', status: 415 }),
+    );
+    assert.equal(storageCalled, false);
+});
+
+test('an oversized image is rejected by the image hard cap before storage access', async () => {
+    let storageCalled = false;
+    const service = new DocumentService(storageStub({
+        upload: async () => {
+            storageCalled = true;
+        },
+    }));
+
+    await assert.rejects(
+        service.upload({
+            userId,
+            orgId,
+            email: 'worker@example.com',
+            documentType: 'Identity Proof',
+            mimeType: 'image/png',
+            body: pngOfSize(5 * 1024 * 1024 + 1),
+        }),
+        (error) => assertAppError(error, { code: 'DOCUMENT_TOO_LARGE', status: 413 }),
+    );
+    assert.equal(storageCalled, false);
+});
+
+test('a file above the recommended size is accepted but flagged with a size warning', async () => {
+    staffDelegate.findMany = (async () => [{ id: staffId, orgId }]) as unknown as typeof prisma.staff.findMany;
+    const service = new DocumentService(storageStub());
+    const transactionClient = {
+        $executeRaw: async () => undefined,
+        staffDocument: {
+            findFirst: async () => null,
+            create: async (args: any) => ({
+                ...args.data,
+                createdAt: new Date('2026-08-20T00:00:00.000Z'),
+                updatedAt: new Date('2026-08-20T00:00:00.000Z'),
+                deletedAt: null,
+                deleteReason: null,
+                deletedBy: null,
+            }),
+        },
+        auditLog: { create: async () => ({}) },
+    };
+    mutablePrisma.$transaction = (async (callback: (tx: typeof transactionClient) => unknown) =>
+        callback(transactionClient)) as unknown as typeof prisma.$transaction;
+
+    const result = await service.upload({
+        userId,
+        orgId,
+        email: 'worker@example.com',
+        documentType: 'Identity Proof',
+        mimeType: 'image/png',
+        body: pngOfSize(1024 * 1024 + 4096),
+    });
+
+    assert.equal(result.status, 'PENDING_REVIEW');
+    assert.equal(result.sizeWarning, true);
 });

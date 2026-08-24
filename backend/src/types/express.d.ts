@@ -5,6 +5,7 @@ declare global {
     interface Request {
       id: string;
       context: AppContext;
+      rawBody?: Buffer;
     }
   }
 }

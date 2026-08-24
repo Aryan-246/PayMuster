@@ -20,6 +20,9 @@
     "@google/genai": "^2.16.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client-runtime-utils": "7.9.1",
+    "@supabase/supabase-js": "^2.112.3",
+    "@upstash/redis": "^1.38.2",
+    "algoliasearch": "^5.57.0",
     "bcryptjs": "^3.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -28,6 +31,8 @@
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^9.0.3",
     "pg": "^8.22.0",
+    "razorpay": "^2.9.8",
+    "stream-chat": "^9.51.0",
     "supabase": "^2.110.0",
     "zod": "^4.4.3"
   },

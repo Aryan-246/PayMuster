@@ -31,6 +31,7 @@ import 'features/dashboard/presentation/verification_screen.dart';
 import 'features/company/presentation/join_company_screen.dart';
 import 'features/company/presentation/owner_dashboard_screen.dart';
 import 'features/company/presentation/owner_request_screen.dart';
+import 'features/billing/presentation/billing_screen.dart';
 
 import 'features/sites/presentation/sites_screen.dart';
 import 'features/announcements/presentation/notices_screen.dart';
@@ -363,6 +364,10 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/app/owner-dashboard',
                 builder: (context, state) => const OwnerDashboardScreen(),
+              ),
+              GoRoute(
+                path: '/app/billing',
+                builder: (context, state) => const BillingScreen(),
               ),
               GoRoute(
                 path: '/app/owner-request',

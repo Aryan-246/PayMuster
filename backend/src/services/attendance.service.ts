@@ -20,8 +20,12 @@ export class AttendanceService {
     checkOutTime?: Date;
     checkInLatitude?: number;
     checkInLongitude?: number;
+    checkInAccuracyMeters?: number;
+    checkInCapturedAt?: Date;
     checkOutLatitude?: number;
     checkOutLongitude?: number;
+    checkOutAccuracyMeters?: number;
+    checkOutCapturedAt?: Date;
     checkInPhotoUrl?: string;
     checkOutPhotoUrl?: string;
     shiftType: ShiftType;

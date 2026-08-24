@@ -6,4 +6,13 @@
 !.env.example
 node_modules
 
+# Local credential inventories and exports (never commit — contain real secrets)
+API KEYs.txt
+API KEYs 2.txt
+API KEYs*.txt
+API_KEYs*.txt
+scratch-keys*
+scratch-keys*.txt
 
+# Sentry Config File
+.env.sentry-build-plugin

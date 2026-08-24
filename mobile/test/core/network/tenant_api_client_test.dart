@@ -98,11 +98,18 @@ Provider<TenantApiClient> _clientProviderFor(http.Client client) {
   });
 }
 
-http.Response _jsonResponse(Map<String, dynamic> body, int statusCode) {
+http.Response _jsonResponse(
+  Map<String, dynamic> body,
+  int statusCode, {
+  Map<String, String> headers = const {},
+}) {
   return http.Response(
     jsonEncode(body),
     statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      ...headers,
+    },
   );
 }
 
@@ -143,12 +150,16 @@ void main() {
   test('preserves typed backend error details', () async {
     final auth = _FakeAuthProvider();
     final httpClient = MockClient(
-      (_) async => _jsonResponse({
-        'error': {
-          'code': 'PAYROLL_ACCESS_DENIED',
-          'message': 'Payroll access is not allowed for this role.',
+      (_) async => _jsonResponse(
+        {
+          'error': {
+            'code': 'PAYROLL_ACCESS_DENIED',
+            'message': 'Payroll access is not allowed for this role.',
+          },
         },
-      }, 403),
+        403,
+        headers: {'x-request-id': 'request-403'},
+      ),
     );
     final clientProvider = _clientProviderFor(httpClient);
     final container = ProviderContainer(
@@ -162,6 +173,7 @@ void main() {
         isA<TenantApiException>()
             .having((error) => error.code, 'code', 'PAYROLL_ACCESS_DENIED')
             .having((error) => error.statusCode, 'statusCode', 403)
+            .having((error) => error.requestId, 'requestId', 'request-403')
             .having(
               (error) => error.message,
               'message',

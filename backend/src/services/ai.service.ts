@@ -24,6 +24,7 @@ export interface AdminAiOperationalContext {
 export interface AdminAiRequest {
   prompt: string;
   actorId: string;
+  role?: string;
   orgId?: string | null;
   requestId?: string;
   ipAddress?: string;
@@ -51,7 +52,7 @@ export interface AdminAiAuditRecord {
 
 export interface AiServiceDependencies {
   provider?: AdminAiProvider;
-  contextReader?: () => Promise<AdminAiOperationalContext>;
+  contextReader?: (request: AdminAiRequest) => Promise<AdminAiOperationalContext>;
   auditWriter?: (input: {
     actorId: string;
     orgId?: string | null;
@@ -76,16 +77,20 @@ const providerResponseSchema: Schema = {
   required: ['message'],
 };
 
-const operationalContextReader = async (): Promise<AdminAiOperationalContext> => {
+const operationalContextReader = async (request: AdminAiRequest): Promise<AdminAiOperationalContext> => {
+  const globalScope = request.role === 'SUPER_ADMIN' && !request.orgId;
+  const orgId = globalScope ? undefined : request.orgId ?? '__missing_org__';
   const [users, companies, sites, attendance, payroll, pendingOwnerRequests, blockedUsers] =
     await Promise.all([
-      prisma.user.count({ where: { deletedAt: null } }),
-      prisma.organization.count({ where: { deletedAt: null } }),
-      prisma.site.count({ where: { deletedAt: null } }),
-      prisma.attendanceRecord.count({ where: { deletedAt: null } }),
-      prisma.payRun.count({ where: { deletedAt: null } }),
-      prisma.ownerRequest.count({ where: { status: 'PENDING', deletedAt: null } }),
-      prisma.user.count({ where: { isDisabled: true, deletedAt: null } }),
+      prisma.user.count({ where: { deletedAt: null, ...(orgId ? { orgId } : {}) } }),
+      prisma.organization.count({ where: { deletedAt: null, ...(orgId ? { id: orgId } : {}) } }),
+      prisma.site.count({ where: { deletedAt: null, ...(orgId ? { orgId } : {}) } }),
+      prisma.attendanceRecord.count({ where: { deletedAt: null, ...(orgId ? { orgId } : {}) } }),
+      prisma.payRun.count({ where: { deletedAt: null, ...(orgId ? { orgId } : {}) } }),
+      globalScope
+        ? prisma.ownerRequest.count({ where: { status: 'PENDING', deletedAt: null } })
+        : Promise.resolve(0),
+      prisma.user.count({ where: { isDisabled: true, deletedAt: null, ...(orgId ? { orgId } : {}) } }),
     ]);
 
   return {
@@ -177,7 +182,7 @@ Return JSON with exactly one field: message.
 
 export class AiService {
   private readonly provider?: AdminAiProvider;
-  private readonly contextReader: () => Promise<AdminAiOperationalContext>;
+  private readonly contextReader: (request: AdminAiRequest) => Promise<AdminAiOperationalContext>;
   private readonly auditWriter: NonNullable<AiServiceDependencies['auditWriter']>;
   private readonly timeoutMs: number;
   private readonly model: string;
@@ -219,7 +224,7 @@ export class AiService {
 
     let context: AdminAiOperationalContext;
     try {
-      context = await this.contextReader();
+      context = await this.contextReader(request);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('AI operational context could not be read', {
@@ -302,6 +307,30 @@ export class AiService {
     });
 
     return result;
+  }
+
+  async processFoundation(
+    operation: 'ANALYZE' | 'SUMMARY' | 'INSIGHTS' | 'QUERY',
+    request: AdminAiRequest,
+  ) {
+    const result = await this.processChat({
+      ...request,
+      prompt: `[${operation}] ${request.prompt}`,
+    });
+    return {
+      analysis: result.message,
+      recommendation: null,
+      proposal: null,
+      confidence: null,
+      metadata: {
+        operation,
+        provider: result.provider,
+        model: result.model,
+        generatedAt: result.generatedAt,
+        scope: result.scope,
+        mutationsAllowed: false,
+      },
+    };
   }
 
   private async withTimeout<T>(promise: Promise<T>): Promise<T> {

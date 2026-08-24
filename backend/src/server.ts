@@ -8,9 +8,12 @@ import attendanceRoutes from './routes/attendance.routes.js';
 import payrollRoutes from './routes/payroll.routes.js';
 import announcementRoutes from './routes/announcement.routes.js';
 import profileRoutes from './routes/profile.routes.js';
+import foundationAiRoutes from './routes/foundation-ai.routes.js';
+import pushRoutes from './routes/push.routes.js';
 import { requestIdMiddleware } from './middlewares/request-id.middleware.js';
 import { config } from './lib/config.js';
 import { emailService } from './lib/email-service.js';
+import { observability } from './lib/observability.js';
 import { logger } from './lib/logger.js';
 import { setupAuditListener } from './lib/audit-listener.js';
 import { setupSystemListeners } from './lib/system-listeners.js';
@@ -24,7 +27,12 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(cors({ origin: config.corsOrigins, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, _res, buffer) => {
+    (req as typeof req & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use(requestIdMiddleware);
 
 app.get('/health', (_req, res) => {
@@ -34,16 +42,29 @@ app.get('/health', (_req, res) => {
 import companyRoutes from './routes/company.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import documentRoutes from './routes/document.routes.js';
+import billingRoutes from './routes/billing.routes.js';
+import mailSupplyRoutes from './routes/mail-supply.routes.js';
 
 app.use('/auth', authRoutes);
 app.use('/api/v1/sites', siteRoutes);
 app.use('/api/v1/attendance', attendanceRoutes);
 app.use('/api/v1/payroll', payrollRoutes);
 app.use('/api/v1/company', companyRoutes);
+app.use('/api/v1/billing', billingRoutes);
 app.use('/api/v1/documents', documentRoutes);
 app.use('/api/v1/announcements', announcementRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/ai', foundationAiRoutes);
+app.use('/api/v1/push', pushRoutes);
+app.use('/api/v1/mail-supply', mailSupplyRoutes);
+
+// Catch-all for unmatched routes: forward a NOT_FOUND AppError so the error
+// handler below emits the standard error envelope instead of Express's default
+// empty 404 response.
+app.use((_req, _res, next) => {
+  next(new AppError('NOT_FOUND', 'The requested resource was not found.', 404));
+});
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) {
@@ -90,6 +111,13 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
     return;
   }
 
+  observability.captureException(err, {
+    requestId: req.id,
+    operation: `${req.method} ${req.path}`,
+    userId: req.context?.user?.id,
+    orgId: req.context?.tenant?.companyId,
+    ipAddress: req.ip,
+  });
   logger.error('server.unhandled_error', err, {
     method: req.method,
     path: req.path,

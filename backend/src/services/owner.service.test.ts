@@ -40,9 +40,9 @@ test('owner submission serializes by applicant and commits request and audit ato
     useDeterministicPublicIds();
     const calls: Array<{ operation: string; args?: unknown }> = [];
     const transactionClient = {
-        $queryRaw: async (...args: unknown[]) => {
-            calls.push({ operation: '$queryRaw', args });
-            return [];
+        $executeRaw: async (...args: unknown[]) => {
+            calls.push({ operation: '$executeRaw', args });
+            return 1;
         },
         user: {
             findFirst: async (args: unknown) => {
@@ -88,7 +88,7 @@ test('owner submission serializes by applicant and commits request and audit ato
     assert.equal(result.id, requestId);
     assert.deepEqual(transactionOptions, { isolationLevel: 'Serializable' });
     assert.deepEqual(calls.map((call) => call.operation), [
-        '$queryRaw',
+        '$executeRaw',
         'user.findFirst',
         'ownerRequest.findFirst',
         'ownerRequest.create',
@@ -110,7 +110,7 @@ test('owner submission rejects affiliated applicants before creating a request',
     useDeterministicPublicIds();
     let writeCount = 0;
     const transactionClient = {
-        $queryRaw: async () => [],
+        $executeRaw: async () => [],
         user: {
             findFirst: async () => ({ id: applicantId, orgId: organizationId, role: 'STAFF' }),
         },
@@ -136,7 +136,7 @@ test('owner submission rejects a second pending request without writing audit da
     useDeterministicPublicIds();
     let writeCount = 0;
     const transactionClient = {
-        $queryRaw: async () => [],
+        $executeRaw: async () => [],
         user: {
             findFirst: async () => ({ id: applicantId, orgId: null, role: 'STAFF' }),
         },

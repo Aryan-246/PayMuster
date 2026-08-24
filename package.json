@@ -10,6 +10,9 @@
     "@algolia/ingestion": "^1.57.0",
     "@algolia/monitoring": "^1.57.0",
     "@algolia/recommend": "^5.57.0",
-    "algoliasearch": "^5.57.0"
+    "@sentry/nextjs": "^10.70.0",
+    "@sentry/node": "^10.70.0",
+    "algoliasearch": "^5.57.0",
+    "firebase": "^12.18.0"
   }
 }

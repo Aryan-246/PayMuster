@@ -129,6 +129,7 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -208,7 +209,7 @@ select {
 
 .auth-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   margin-bottom: 26px;
   padding: 4px;
@@ -218,6 +219,7 @@ select {
 }
 
 .auth-tab {
+  min-width: 0;
   min-height: 40px;
   border: 0;
   border-radius: 8px;
@@ -225,6 +227,8 @@ select {
   color: var(--pm-text-secondary);
   font-size: 14px;
   font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
   transition: color var(--pm-transition-fast), background var(--pm-transition-fast), box-shadow var(--pm-transition-fast);
 }
 
@@ -296,7 +300,7 @@ select {
   font-weight: 700;
 }
 
-.auth-field > input,
+.auth-field>input,
 .auth-password-input input {
   width: 100%;
   min-height: 48px;
@@ -309,16 +313,16 @@ select {
   transition: border-color var(--pm-transition-fast), box-shadow var(--pm-transition-fast), transform var(--pm-transition-fast);
 }
 
-.auth-field > input {
+.auth-field>input {
   padding: 0 13px;
 }
 
-.auth-field > input::placeholder,
+.auth-field>input::placeholder,
 .auth-password-input input::placeholder {
   color: var(--pm-text-tertiary);
 }
 
-.auth-field > input:focus,
+.auth-field>input:focus,
 .auth-password-input input:focus {
   border-color: var(--pm-color-primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--pm-color-primary) 20%, transparent);
@@ -626,6 +630,14 @@ select {
   .auth-card {
     padding: 24px 18px;
     border-radius: 18px;
+  }
+
+  .auth-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-tab {
+    min-height: 38px;
   }
 
   .auth-login-options,

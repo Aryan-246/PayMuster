@@ -1,28 +1,36 @@
 import { prisma } from './prisma.js';
 import { eventBus, Events } from './events.js';
 import { logger } from './logger.js';
-import { AuditAction } from '../../generated/prisma/index.js';
+import { pushNotificationService } from '../services/push-notification.service.js';
 
 export function setupSystemListeners() {
   // 1. Notification Listener
   eventBus.on('Notification', async (payload: { orgId: string, userId?: string, title: string, body: string, type: string, deepLink?: string }) => {
     try {
       const validOrgId = payload.orgId && payload.orgId !== 'SYSTEM' && /^[0-9a-fA-F-]{36}$/.test(payload.orgId) ? payload.orgId : null;
-      await prisma.notification.create({
+      const notification = await prisma.notification.create({
         data: {
-          orgId: validOrgId as any,
-          userId: payload.userId, // Null means broadcast to org
+          orgId: validOrgId,
+          userId: payload.userId,
           title: payload.title,
           body: payload.body,
           type: payload.type,
           deepLink: payload.deepLink,
-        } as any
+        },
+        select: { id: true, orgId: true, userId: true, title: true, body: true, type: true, deepLink: true },
       });
 
-
-      logger.info(`[Notification] Created: ${payload.title}`);
+      logger.info('notification.created', { notificationId: notification.id, orgId: notification.orgId, type: notification.type });
+      if (notification.orgId) {
+        await pushNotificationService.dispatch(notification).catch((error) => {
+          logger.error('push.notification_dispatch_failed', error, {
+            notificationId: notification.id,
+            orgId: notification.orgId,
+          });
+        });
+      }
     } catch (error) {
-      logger.error('[Notification] Failed to create notification:', error);
+      logger.error('notification.create_failed', error, { orgId: payload.orgId, type: payload.type });
     }
   });
 

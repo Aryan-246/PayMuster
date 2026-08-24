@@ -1,3 +1,5 @@
+import { observability } from './observability';
+
 const fallbackBaseUrl = 'http://localhost:4000';
 
 export class ApiError extends Error {
@@ -33,7 +35,8 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
         ...init.headers,
       },
     });
-  } catch {
+  } catch (error) {
+    observability.captureException(error, { operation: 'requestJson', path });
     throw new ApiError('Unable to reach PayMuster. Check your connection and try again.', 0, 'NETWORK_ERROR');
   }
 
@@ -42,7 +45,8 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
   if (raw) {
     try {
       payload = JSON.parse(raw);
-    } catch {
+    } catch (error) {
+      observability.captureException(error, { operation: 'requestJson.parse', path, status: response.status });
       throw new ApiError('PayMuster returned an unexpected response. Please try again.', response.status, 'INVALID_RESPONSE');
     }
   }
@@ -51,12 +55,20 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
     const error = payload as {
       error?: { message?: string; code?: string; retryAfterSeconds?: number };
     };
-    throw new ApiError(
+    const apiError = new ApiError(
       error.error?.message || 'Something went wrong. Please try again.',
       response.status,
       error.error?.code,
       error.error?.retryAfterSeconds,
     );
+    observability.captureException(apiError, {
+      operation: 'requestJson.response',
+      path,
+      status: response.status,
+      code: apiError.code,
+      requestId: response.headers.get('X-Request-ID') || undefined,
+    });
+    throw apiError;
   }
 
   return payload as T;
