@@ -142,6 +142,95 @@ export class FinancialIntegrityService {
         });
     }
 
+    /**
+     * Payment history for the Owner finance view (view_payroll audience).
+     * Org scope is server-authoritative; optional staffId / status filters.
+     */
+    async listPayments(
+        orgId: string,
+        options: { staffId?: string; status?: string; page: number; limit: number },
+    ) {
+        const where = {
+            orgId,
+            deletedAt: null,
+            ...(options.staffId && { staffId: options.staffId }),
+            ...(options.status && { status: options.status as any }),
+        };
+        const skip = (options.page - 1) * options.limit;
+
+        const [payments, total] = await Promise.all([
+            this.db.payment.findMany({
+                where,
+                select: {
+                    id: true,
+                    amount: true,
+                    mode: true,
+                    status: true,
+                    referenceId: true,
+                    approvedAt: true,
+                    failureReason: true,
+                    createdAt: true,
+                    staff: { select: { id: true, publicId: true, firstName: true, lastName: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: options.limit,
+            }),
+            this.db.payment.count({ where }),
+        ]);
+
+        return { payments, total, page: options.page, totalPages: Math.ceil(total / options.limit) };
+    }
+
+    /**
+     * Expense ledger for the Owner finance view (view_payroll audience) —
+     * the expense list owner.txt shows alongside payments. Approvals are
+     * included so the UI can render the pending/approved state honestly.
+     */
+    async listExpenses(
+        orgId: string,
+        options: { siteId?: string; status?: string; category?: string; page: number; limit: number },
+    ) {
+        const where = {
+            orgId,
+            deletedAt: null,
+            ...(options.siteId && { siteId: options.siteId }),
+            ...(options.status && { status: options.status as any }),
+            ...(options.category && {
+                category: { contains: options.category.trim(), mode: 'insensitive' as const },
+            }),
+        };
+        const skip = (options.page - 1) * options.limit;
+
+        const [expenses, total] = await Promise.all([
+            this.db.expense.findMany({
+                where,
+                select: {
+                    id: true,
+                    amount: true,
+                    category: true,
+                    date: true,
+                    paymentMethod: true,
+                    status: true,
+                    notes: true,
+                    createdAt: true,
+                    site: { select: { id: true, publicId: true, name: true } },
+                    paidBy: { select: { id: true, firstName: true, lastName: true } },
+                    approvals: {
+                        select: { id: true, action: true, notes: true, actorId: true, createdAt: true },
+                        orderBy: { createdAt: 'desc' },
+                    },
+                },
+                orderBy: { date: 'desc' },
+                skip,
+                take: options.limit,
+            }),
+            this.db.expense.count({ where }),
+        ]);
+
+        return { expenses, total, page: options.page, totalPages: Math.ceil(total / options.limit) };
+    }
+
     private async assertActor(tx: any, orgId: string, userId: string): Promise<void> {
         const actor = await tx.user.findFirst({
             where: { id: userId, orgId, deletedAt: null, isActive: true, isDisabled: false },

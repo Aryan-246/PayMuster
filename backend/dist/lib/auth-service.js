@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { AppError } from './app-error.js';
@@ -5,11 +6,14 @@ import { assertStrongPassword, comparePassword, hashPassword, hashToken } from '
 import { config } from './config.js';
 import { emailService, EmailService } from './email-service.js';
 import { logger, maskEmail } from './logger.js';
+import { maintenanceService } from './maintenance-service.js';
 import { otpService } from './otp-service.js';
 import { prisma } from './prisma.js';
+import { eventBus, Events } from './events.js';
 const publicUserSelect = {
     id: true,
     orgId: true,
+    status: true,
     email: true,
     firstName: true,
     lastName: true,
@@ -25,8 +29,12 @@ const credentialUserSelect = {
     ...publicUserSelect,
     passwordHash: true,
 };
+const ACCOUNT_IDENTITY_CONFLICT = 'ACCOUNT_IDENTITY_CONFLICT';
 function normalizeEmail(email) {
     return email.trim().toLowerCase();
+}
+function accountIdentityConflict() {
+    return new AppError(ACCOUNT_IDENTITY_CONFLICT, 'This account requires administrator review before it can be used.', 409);
 }
 function displayName(user) {
     return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
@@ -59,6 +67,7 @@ export function sanitizeUser(user) {
         isActive: user.isActive,
         isDisabled: user.isDisabled,
         role: user.role,
+        status: user.status,
         orgId: user.orgId,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
@@ -67,10 +76,15 @@ export function sanitizeUser(user) {
 export class AuthService {
     mailer;
     otpManager;
-    googleClient = new OAuth2Client(config.googleClientId);
-    constructor(mailer = emailService, otpManager = otpService) {
+    maintenance;
+    googleClient;
+    googleClientId;
+    constructor(mailer = emailService, otpManager = otpService, maintenance = maintenanceService, googleClient = new OAuth2Client(config.googleClientId), googleClientId = config.googleClientId) {
         this.mailer = mailer;
         this.otpManager = otpManager;
+        this.maintenance = maintenance;
+        this.googleClient = googleClient;
+        this.googleClientId = googleClientId;
     }
     /**
      * Register a new user with atomic transaction.
@@ -79,32 +93,45 @@ export class AuthService {
      */
     async register(input, context) {
         const email = normalizeEmail(input.email);
-        // Duplicate email check BEFORE transaction
-        const existingUser = await this.findPublicUserByEmail(email);
+        // Duplicate email check BEFORE transaction. Existing ambiguous data is still
+        // a duplicate for signup purposes and must never create another identity.
+        let existingUser;
+        try {
+            existingUser = await this.findPublicUserByEmail(email);
+        }
+        catch (error) {
+            if (error instanceof AppError && error.code === ACCOUNT_IDENTITY_CONFLICT) {
+                throw new AppError('EMAIL_ALREADY_REGISTERED', 'An account already exists for this email address.', 409);
+            }
+            throw error;
+        }
         if (existingUser) {
             throw new AppError('EMAIL_ALREADY_REGISTERED', 'An account already exists for this email address.', 409);
         }
         assertStrongPassword(input.password, [email.split('@')[0] || '', input.name]);
         const parts = nameParts(input.name);
         const passwordHash = await hashPassword(input.password);
-        // Step 1: Create user + org in a transaction
+        // Step 1: Create user in a transaction
         const user = await prisma.$transaction(async (tx) => {
-            // Double-check inside transaction to prevent race condition
-            const duplicate = await tx.user.findFirst({ where: { email }, select: { id: true } });
+            // The current composite constraint permits duplicate NULL-org emails.
+            // Serialize identity creation by normalized email until global uniqueness
+            // is enforced by the database migration described in the runbook.
+            await tx.$executeRaw `SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
+            const duplicate = await tx.user.findFirst({
+                where: { email: { equals: email, mode: 'insensitive' } },
+                select: { id: true },
+            });
             if (duplicate) {
                 throw new AppError('EMAIL_ALREADY_REGISTERED', 'An account already exists for this email address.', 409);
             }
-            const organization = await tx.organization.create({
-                data: { name: (parts.firstName || 'My') + ' Organization' },
-            });
             return tx.user.create({
                 data: {
-                    orgId: organization.id,
+                    orgId: null, // Initial users don't belong to any org
                     email,
                     firstName: parts.firstName,
                     lastName: parts.lastName,
                     passwordHash,
-                    role: 'OWNER',
+                    role: 'STAFF', // Default role is STAFF
                     provider: 'email',
                     emailVerified: false,
                     isActive: true,
@@ -188,11 +215,12 @@ export class AuthService {
             throw new AppError('INVALID_CREDENTIALS', 'Invalid email or password.', 401);
         }
         this.assertUserCanAuthenticate(user);
+        await this.maintenance.assertOperational(user.role);
         if (!user.emailVerified) {
             throw new AppError('EMAIL_NOT_VERIFIED', 'Please verify your email address before signing in.', 403);
         }
         await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-        const session = await this.issueSession(user.id, user.orgId, input.rememberMe, context);
+        const session = await this.issueSession(user.id, user.orgId, user.role, input.rememberMe, context);
         await this.sendNotificationWithoutBlocking('auth.login_alert_delivery_failed', user, () => this.mailer.sendLoginNotificationEmail(user.email, {
             name: displayName(user),
             ...buildEmailContext(context),
@@ -206,7 +234,18 @@ export class AuthService {
     }
     async requestPasswordReset(emailInput, context) {
         const email = normalizeEmail(emailInput);
-        const user = await this.findCredentialUserByEmail(email);
+        let user;
+        try {
+            user = await this.findCredentialUserByEmail(email);
+        }
+        catch (error) {
+            if (error instanceof AppError && error.code === ACCOUNT_IDENTITY_CONFLICT) {
+                // Preserve the endpoint's anti-enumeration contract and never send an OTP
+                // when the email cannot be mapped to exactly one identity.
+                return { accepted: true };
+            }
+            throw error;
+        }
         if (!user || !user.passwordHash) {
             return { accepted: true };
         }
@@ -237,14 +276,14 @@ export class AuthService {
         logger.info('auth.password_reset_completed', { userId: user.id });
     }
     async authenticateGoogle(input, context) {
-        if (!config.googleClientId) {
+        if (!this.googleClientId) {
             throw new AppError('GOOGLE_AUTH_UNAVAILABLE', 'Google sign-in is not configured.', 503);
         }
         let payload;
         try {
             const ticket = await this.googleClient.verifyIdToken({
                 idToken: input.idToken,
-                audience: config.googleClientId,
+                audience: this.googleClientId,
             });
             payload = ticket.getPayload();
         }
@@ -263,6 +302,7 @@ export class AuthService {
         let isNewAccount = false;
         if (existingUser) {
             this.assertUserCanAuthenticate(existingUser);
+            await this.maintenance.assertOperational(existingUser.role);
             user = await prisma.user.update({
                 where: { id: existingUser.id },
                 data: { emailVerified: true, lastLoginAt: new Date() },
@@ -270,29 +310,58 @@ export class AuthService {
             });
         }
         else {
+            // New Google identities have no role that could qualify for emergency
+            // access, so maintenance must be checked before entering a write transaction.
+            await this.maintenance.assertOperational();
             const suppliedName = (payload.name || input.name || '').trim();
             const parts = nameParts(suppliedName || 'Google User');
-            user = await prisma.$transaction(async (tx) => {
-                const organization = await tx.organization.create({
-                    data: { name: (parts.firstName || 'Google') + ' Organization' },
-                });
-                return tx.user.create({
-                    data: {
-                        orgId: organization.id,
-                        email,
-                        firstName: payload.given_name || parts.firstName,
-                        lastName: payload.family_name || parts.lastName,
-                        provider: 'google',
-                        emailVerified: true,
-                        role: 'OWNER',
-                        isActive: true,
-                    },
+            const identity = await prisma.$transaction(async (tx) => {
+                await tx.$executeRaw `SELECT pg_advisory_xact_lock(hashtextextended(${email}, 0))`;
+                const matches = await tx.user.findMany({
+                    where: { email: { equals: email, mode: 'insensitive' } },
+                    orderBy: { createdAt: 'asc' },
+                    take: 2,
                     select: publicUserSelect,
                 });
+                this.assertEmailIdentityIsUnambiguous(email, matches);
+                if (matches[0]) {
+                    this.assertUserCanAuthenticate(matches[0]);
+                    await this.maintenance.assertOperational(matches[0].role);
+                    return {
+                        user: await tx.user.update({
+                            where: { id: matches[0].id },
+                            data: { emailVerified: true, lastLoginAt: new Date() },
+                            select: publicUserSelect,
+                        }),
+                        created: false,
+                    };
+                }
+                // Recheck immediately before creation so no identity is written if
+                // maintenance became active while this transaction was waiting.
+                await this.maintenance.assertOperational();
+                return {
+                    user: await tx.user.create({
+                        data: {
+                            orgId: null,
+                            email,
+                            firstName: payload.given_name || parts.firstName,
+                            lastName: payload.family_name || parts.lastName,
+                            provider: 'google',
+                            emailVerified: true,
+                            role: 'STAFF',
+                            isActive: true,
+                        },
+                        select: publicUserSelect,
+                    }),
+                    created: true,
+                };
             });
-            isNewAccount = true;
+            user = identity.user;
+            isNewAccount = identity.created;
         }
-        const session = await this.issueSession(user.id, user.orgId, true, context);
+        // Keep a defensive final check immediately before session issuance.
+        await this.maintenance.assertOperational(user.role);
+        const session = await this.issueSession(user.id, user.orgId, user.role, true, context);
         if (isNewAccount) {
             await this.sendNotificationWithoutBlocking('auth.google_welcome_delivery_failed', user, () => this.mailer.sendWelcomeEmail(email, { name: displayName(user) }));
         }
@@ -312,8 +381,11 @@ export class AuthService {
     async refreshSession(refreshToken) {
         const claims = this.verifyRefreshToken(refreshToken);
         const session = await prisma.session.findFirst({
-            where: { refreshTokenHash: hashToken(refreshToken), revokedAt: null },
-            orderBy: { createdAt: 'desc' },
+            where: {
+                id: claims.sessionId,
+                refreshTokenHash: hashToken(refreshToken),
+                revokedAt: null,
+            },
         });
         if (!session ||
             session.expiresAt.getTime() <= Date.now() ||
@@ -325,12 +397,13 @@ export class AuthService {
             where: { id: session.userId },
             select: publicUserSelect,
         });
-        if (!user) {
+        if (!user || user.orgId !== session.orgId) {
             throw new AppError('SESSION_INVALID', 'Your session is invalid. Please sign in again.', 401);
         }
         this.assertUserCanAuthenticate(user);
+        await this.maintenance.assertOperational(user.role);
         return {
-            accessToken: this.createAccessToken(claims.userId, claims.orgId),
+            accessToken: this.createAccessToken(claims.userId, session.orgId, user.role, session.id),
             expiresAt: new Date(Date.now() + config.jwtAccessTtlMs),
         };
     }
@@ -346,43 +419,123 @@ export class AuthService {
     }
     verifyAccessToken(token) {
         const claims = this.verifyToken(token, 'access');
-        return { userId: claims.userId, orgId: claims.orgId };
+        return {
+            userId: claims.userId,
+            orgId: claims.orgId,
+            role: claims.role || 'STAFF',
+            sessionId: claims.sessionId,
+        };
+    }
+    async requestDeleteAccountOtp(userId, passwordString, context) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.status === 'DELETED') {
+            throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+        }
+        if (user.provider !== 'email') {
+            throw new AppError('INVALID_CREDENTIALS', 'Cannot verify password for non-email accounts.', 401);
+        }
+        if (!user.passwordHash) {
+            throw new AppError('INVALID_CREDENTIALS', 'Invalid password.', 401);
+        }
+        const isValid = await comparePassword(passwordString, user.passwordHash);
+        if (!isValid) {
+            throw new AppError('INVALID_CREDENTIALS', 'Incorrect password.', 401);
+        }
+        const issued = await otpService.issue(userId, 'account-deletion');
+        // Send email
+        await emailService.sendAccountDeletionEmail(user.email, {
+            otp: issued.otp,
+        });
+        return issued;
+    }
+    async checkDeleteAccountOtp(userId, otp) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.status === 'DELETED') {
+            throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+        }
+        await otpService.verify(userId, 'account-deletion', otp);
+    }
+    async verifyDeleteAccountOtp(userId, otp) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.status === 'DELETED') {
+            throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+        }
+        await otpService.consume(userId, 'account-deletion', otp);
     }
     async deleteAccount(userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user)
+            return;
+        if (user.role === 'SUPER_ADMIN') {
+            throw new AppError('ACTION_DENIED', 'Super Admin accounts cannot be permanently deleted.', 403);
+        }
+        if (user.role === 'OWNER' && user.orgId) {
+            throw new AppError('OWNER_ORGANIZATION_REQUIRES_ADMIN_ACTION', 'An Owner who owns an organization must be removed through an administrator-reviewed process.', 409);
+        }
         await prisma.$transaction(async (tx) => {
-            // 1. Delete exclusively-owned records
+            const deletedAt = new Date();
+            await tx.session.updateMany({
+                where: { userId, revokedAt: null },
+                data: { revokedAt: deletedAt },
+            });
+            const deletedEmail = `deleted-${Date.now()}-${user.email}`;
+            await tx.user.update({
+                where: { id: userId },
+                data: {
+                    status: 'DELETED',
+                    email: deletedEmail,
+                    isActive: false,
+                    isDisabled: true,
+                    deletedAt,
+                    deleteReason: 'User requested account deletion',
+                },
+            });
             await tx.authOtp.deleteMany({ where: { userId } });
-            await tx.session.deleteMany({ where: { userId } });
-            await tx.notification.deleteMany({ where: { userId } });
-            await tx.syncQueue.deleteMany({ where: { userId } });
-            // 2. Delete mandatory operational records that cannot exist without the user
-            await tx.paymentApproval.deleteMany({ where: { actorId: userId } });
-            await tx.correctionRequest.deleteMany({ where: { requestedById: userId } });
-            // 3. Nullify optional references for business records
-            await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
-            await tx.payment.updateMany({ where: { approvedById: userId }, data: { approvedById: null } });
-            await tx.payRun.updateMany({ where: { approvedById: userId }, data: { approvedById: null } });
-            await tx.attendanceRecord.updateMany({ where: { markedById: userId }, data: { markedById: null } });
-            await tx.correctionRequest.updateMany({ where: { resolvedById: userId }, data: { resolvedById: null } });
-            await tx.expense.updateMany({ where: { paidById: userId }, data: { paidById: null } });
-            // 4. Finally, delete the user
-            await tx.user.delete({ where: { id: userId } });
         });
+        eventBus.emitEvent(Events.USER_DELETED, { userId });
+        // Also log audit action if needed, though audit-listener can handle it if we send it
+        eventBus.emitEvent('AuditLog', {
+            orgId: user.orgId || null,
+            userId: user.id,
+            action: 'DELETE',
+            entityType: 'User',
+            entityId: userId,
+            changes: { status: 'DELETED' }
+        });
+        logger.info('auth.account_soft_deleted', { userId });
     }
     // ── Private helpers ──────────────────────────────────────────────────
     async findPublicUserByEmail(email) {
-        return prisma.user.findFirst({
-            where: { email },
-            orderBy: { createdAt: 'desc' },
+        const users = await prisma.user.findMany({
+            where: { email: { equals: email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            take: 2,
             select: publicUserSelect,
         });
+        this.assertEmailIdentityIsUnambiguous(email, users);
+        return users[0] ?? null;
     }
     async findCredentialUserByEmail(email) {
-        return prisma.user.findFirst({
-            where: { email },
-            orderBy: { createdAt: 'desc' },
+        const users = await prisma.user.findMany({
+            where: { email: { equals: email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            take: 2,
             select: credentialUserSelect,
         });
+        this.assertEmailIdentityIsUnambiguous(email, users);
+        return users[0] ?? null;
+    }
+    assertEmailIdentityIsUnambiguous(email, users) {
+        if (users.length <= 1) {
+            return;
+        }
+        const conflict = accountIdentityConflict();
+        logger.error('auth.email_identity_conflict', conflict, {
+            email: maskEmail(email),
+            userIds: users.map((user) => user.id),
+            orgIds: users.map((user) => user.orgId),
+        });
+        throw conflict;
     }
     async deliverOtp(user, purpose, context) {
         if (!user.email) {
@@ -415,11 +568,13 @@ export class AuthService {
     async rollbackUserCreation(userId, orgId) {
         try {
             // Delete OTPs, then user, then org (respecting FK constraints)
-            await prisma.$transaction([
-                prisma.authOtp.deleteMany({ where: { userId } }),
-                prisma.user.delete({ where: { id: userId } }),
-                prisma.organization.delete({ where: { id: orgId } }),
-            ]);
+            await prisma.$transaction(async (tx) => {
+                await tx.authOtp.deleteMany({ where: { userId } });
+                await tx.user.delete({ where: { id: userId } });
+                if (orgId) {
+                    await tx.organization.delete({ where: { id: orgId } });
+                }
+            });
             logger.info('auth.signup_rollback_completed', { userId, orgId });
         }
         catch (rollbackError) {
@@ -427,13 +582,15 @@ export class AuthService {
             logger.error('auth.signup_rollback_failed', rollbackError, { userId, orgId });
         }
     }
-    async issueSession(userId, orgId, rememberMe, context) {
+    async issueSession(userId, orgId, role, rememberMe, context) {
         const lifetimeMs = rememberMe ? config.rememberMeSessionMs : config.standardSessionMs;
-        const refreshToken = this.createRefreshToken(userId, orgId, lifetimeMs);
+        const sessionId = randomUUID();
+        const refreshToken = this.createRefreshToken(userId, orgId, role, sessionId, lifetimeMs);
         const expiresAt = new Date(Date.now() + lifetimeMs);
         await prisma.session.create({
             data: {
-                orgId,
+                id: sessionId,
+                orgId: orgId || null,
                 userId,
                 refreshTokenHash: hashToken(refreshToken),
                 expiresAt,
@@ -442,12 +599,12 @@ export class AuthService {
             },
         });
         return {
-            accessToken: this.createAccessToken(userId, orgId),
+            accessToken: this.createAccessToken(userId, orgId, role, sessionId),
             refreshToken,
             expiresAt,
         };
     }
-    createAccessToken(userId, orgId) {
+    createAccessToken(userId, orgId, role, sessionId) {
         const options = {
             algorithm: 'HS256',
             audience: config.jwtAudience,
@@ -455,9 +612,9 @@ export class AuthService {
             subject: userId,
             expiresIn: config.jwtAccessExpiresIn,
         };
-        return jwt.sign({ userId, orgId, type: 'access' }, config.jwtSecret, options);
+        return jwt.sign({ userId, orgId, role, sessionId, type: 'access' }, config.jwtSecret, options);
     }
-    createRefreshToken(userId, orgId, lifetimeMs) {
+    createRefreshToken(userId, orgId, role, sessionId, lifetimeMs) {
         const options = {
             algorithm: 'HS256',
             audience: config.jwtAudience,
@@ -465,7 +622,7 @@ export class AuthService {
             subject: userId,
             expiresIn: Math.floor(lifetimeMs / 1_000),
         };
-        return jwt.sign({ userId, orgId, type: 'refresh' }, config.jwtSecret, options);
+        return jwt.sign({ userId, orgId, role, sessionId, type: 'refresh' }, config.jwtSecret, options);
     }
     verifyRefreshToken(token) {
         return this.verifyToken(token, 'refresh');
@@ -484,11 +641,17 @@ export class AuthService {
         }
         if (claims.type !== expectedType ||
             typeof claims.userId !== 'string' ||
-            typeof claims.orgId !== 'string' ||
+            typeof claims.sessionId !== 'string' ||
+            (typeof claims.orgId !== 'string' && claims.orgId !== null) ||
             claims.sub !== claims.userId) {
             throw new AppError('SESSION_INVALID', 'Your session is invalid. Please sign in again.', 401);
         }
-        return { userId: claims.userId, orgId: claims.orgId };
+        return {
+            userId: claims.userId,
+            orgId: claims.orgId,
+            role: claims.role || 'WORKER',
+            sessionId: claims.sessionId,
+        };
     }
     assertUserCanAuthenticate(user) {
         if (user.isDisabled) {
@@ -496,6 +659,9 @@ export class AuthService {
         }
         if (!user.isActive) {
             throw new AppError('ACCOUNT_INACTIVE', 'This account is inactive. Contact support for help.', 403);
+        }
+        if (['DELETED', 'BLOCKED', 'INACTIVE', 'SUSPENDED', 'REJECTED'].includes(user.status)) {
+            throw new AppError('ACCOUNT_UNAVAILABLE', `This account is ${user.status.toLowerCase()}.`, 403);
         }
     }
     async sendNotificationWithoutBlocking(event, user, send) {

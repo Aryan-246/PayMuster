@@ -67,6 +67,9 @@ model Organization {
   paymentEvents        PaymentEvent[]
   usageRecords         UsageRecord[]
   entitlements         Entitlement[]
+  mailDispatches       MailDispatch[]
+  memberships          Membership[]
+  reviews              Review[]
 
   @@index([name], map: "idx_organizations_name")
   @@map("organizations")
@@ -121,6 +124,9 @@ model User {
   siteHistoryChanges   SiteHistory[]
   siteMembers          SiteMember[]
   syncQueue            SyncQueue[]
+  memberships          Membership[]
+  reviews              Review[]
+  moderatedReviews    Review[]             @relation("ReviewModerator")
   org                  Organization?        @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@unique([orgId, email], name: "uq_users_org_id_email")
@@ -1159,6 +1165,17 @@ enum CompanyStatus {
   DELETED
 }
 
+// Multi-company membership lifecycle (blueprint §L). Dormant unless
+// MULTI_COMPANY_ENABLED is ON: the tenant middleware only consults these rows
+// when the flag is enabled; with the flag OFF the single user.orgId check
+// remains authoritative. INVITED rows never grant access; only ACTIVE does.
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
 enum DocumentStatus {
   UPLOADED
   PENDING
@@ -1469,6 +1486,7 @@ model Subscription {
   @@index([orgId, status], map: "idx_subscriptions_org_status")
   @@index([planId], map: "idx_subscriptions_plan_id")
   @@index([providerSubscriptionId], map: "idx_subscriptions_provider_id")
+  @@index([status, currentPeriodEnd], map: "idx_subscriptions_status_period_end")
   @@map("subscriptions")
 }
 
@@ -1507,6 +1525,32 @@ model UsageRecord {
   @@index([orgId, metric], map: "idx_usage_org_metric")
   @@index([subscriptionId], map: "idx_usage_subscription_id")
   @@map("usage_records")
+}
+
+// Durable idempotency + history anchor for Mail Supply sends (blueprint §J).
+// The globally-unique idempotencyKey makes a retried request return the original
+// result without re-charging quota or re-sending. PENDING → COMPLETED; a stuck
+// PENDING row (process died mid-send) is surfaced as MAIL_DISPATCH_IN_PROGRESS.
+model MailDispatch {
+  id             String        @id @default(uuid()) @db.Uuid
+  orgId          String?       @db.Uuid
+  idempotencyKey String        @unique(map: "mail_dispatches_idempotencyKey_key")
+  status         String        @default("PENDING")
+  subject        String
+  targetType     String
+  targetRole     String?
+  targetUserId   String?       @db.Uuid
+  recipientCount Int           @default(0)
+  sent           Int           @default(0)
+  failed         Int           @default(0)
+  blocked        Int           @default(0)
+  actorId        String?       @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  org            Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, createdAt], map: "idx_mail_dispatch_org_created")
+  @@map("mail_dispatches")
 }
 
 model Invoice {
@@ -1557,4 +1601,60 @@ model PaymentEvent {
   @@index([orgId, status], map: "idx_payment_events_org_status")
   @@index([subscriptionId], map: "idx_payment_events_subscription_id")
   @@map("payment_events")
+}
+
+// Cross-company membership (blueprint §L). Additive and dormant: nothing reads
+// this table unless MULTI_COMPANY_ENABLED=true, in which case an ACTIVE row
+// grants the user tenant access to that company in addition to user.orgId.
+// The primary org stays user.orgId — membership rows never move the primary.
+model Membership {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  orgId     String           @db.Uuid
+  role      UserRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime         @updatedAt @db.Timestamptz(6)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org       Organization     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, orgId], map: "uq_memberships_user_org")
+  @@index([orgId], map: "idx_memberships_org_id")
+  @@map("memberships")
+}
+
+// Customer Reviews (admin phase §7). A member of an organization submits a
+// rating + text review of their company; it enters PENDING moderation and only
+// PUBLISHED reviews are ever surfaced publicly. One active review per user per
+// org (partial unique index below — Postgres 15+), preventing duplicate/spam
+// submissions while still allowing a fresh review after the previous one is
+// HIDDEN or FLAGGED by moderation.
+model Review {
+  id            String       @id @default(uuid()) @db.Uuid
+  publicId      String?      @unique
+  userId        String       @db.Uuid
+  orgId         String       @db.Uuid
+  rating        Int
+  text          String
+  status        ReviewStatus @default(PENDING)
+  adminResponse String?
+  moderatedById String?      @db.Uuid
+  moderatedAt   DateTime?    @db.Timestamptz(6)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  moderatedBy   User?        @relation("ReviewModerator", fields: [moderatedById], references: [id], onDelete: Restrict)
+
+  @@index([orgId, status], map: "idx_reviews_org_status")
+  @@index([userId], map: "idx_reviews_user_id")
+  @@index([createdAt], map: "idx_reviews_created_at")
+  @@map("reviews")
+}
+
+enum ReviewStatus {
+  PENDING
+  PUBLISHED
+  HIDDEN
+  FLAGGED
 }

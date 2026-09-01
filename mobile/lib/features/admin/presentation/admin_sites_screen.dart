@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'theme/admin_tokens.dart';
 import '../../../../components/foundation/pm_text_input.dart';
 import '../data/admin_api_client.dart';
@@ -116,6 +117,7 @@ class _AdminSitesScreenState extends ConsumerState<AdminSitesScreen> {
                         ),
                         child: ListTile(
                           contentPadding: const EdgeInsets.all(AdminSpacing.md),
+                          onTap: () => context.go('/admin/sites/${s.id}'),
                           leading: CircleAvatar(
                             radius: 24,
                             backgroundColor: AdminColors.primary.withValues(

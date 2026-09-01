@@ -3,6 +3,13 @@ import { prisma } from '../lib/prisma.js';
 
 const ACTIVE_SUBSCRIPTION_STATUSES = ['TRIALING', 'ACTIVE', 'PAST_DUE'] as const;
 
+// Persisted, server-authoritative global subscription switch. Stored as a single
+// system_settings row so the state survives restarts and is shared across every
+// backend instance, exactly like the maintenance-mode flag.
+const GLOBAL_SUBSCRIPTION_SWITCH_KEY = 'GLOBAL_SUBSCRIPTION_ENABLED';
+const SWITCH_CACHE_TTL_MS = 30_000;
+const SYSTEM_SETTINGS_AUDIT_ENTITY_ID = '00000000-0000-0000-0000-000000000000';
+
 type JsonObject = Record<string, unknown>;
 
 type BillingDb = {
@@ -13,6 +20,9 @@ type BillingDb = {
     usageRecord: any;
     invoice: any;
     paymentEvent: any;
+    user: any;
+    organization: any;
+    systemSettings?: any;
     auditLog?: any;
     notification?: any;
 };
@@ -88,29 +98,68 @@ function numericLimit(value: unknown): number | null {
 }
 
 export class SubscriptionService {
-    private static globalSubscriptionEnabled = true;
     private readonly db: BillingDb;
+    // Short-lived, in-process read cache for the persisted global switch. The
+    // system_settings row is the source of truth shared by every backend
+    // instance; the cache only spares frequent entitlement checks a database
+    // round-trip, mirroring maintenance-service's 30s window.
+    private switchCache: { value: boolean; fetchedAt: number } | null = null;
 
     constructor(db: BillingDb = prisma as unknown as BillingDb) {
         this.db = db;
     }
 
     /**
-     * Server-authoritative global subscription switch.
+     * Server-authoritative global subscription switch, persisted in system_settings.
      * OFF: all users get unrestricted subscription feature access while normal RBAC remains active.
      * ON: normal subscription checking resumes.
-     * Toggling OFF does NOT delete or cancel existing subscriptions.
+     * Toggling OFF does NOT delete or cancel existing subscriptions; switching ON again
+     * resumes the pre-existing subscription/plan/trial/entitlement state untouched.
+     * Defaults to ON (enforcement enabled) when the row has never been written, and
+     * survives process restarts because the state lives in the database.
      */
-    static getGlobalSubscriptionSwitch(): boolean {
-        return SubscriptionService.globalSubscriptionEnabled;
+    async getGlobalSubscriptionSwitch(): Promise<boolean> {
+        const now = Date.now();
+        if (this.switchCache && now - this.switchCache.fetchedAt < SWITCH_CACHE_TTL_MS) {
+            return this.switchCache.value;
+        }
+        const setting = await this.db.systemSettings.findUnique({
+            where: { key: GLOBAL_SUBSCRIPTION_SWITCH_KEY },
+        });
+        // Absence of the row means enforcement has never been disabled: default ON.
+        const value = setting ? setting.value !== 'false' : true;
+        this.switchCache = { value, fetchedAt: now };
+        return value;
     }
 
-    static setGlobalSubscriptionSwitch(enabled: boolean, actorRole?: string): boolean {
+    async setGlobalSubscriptionSwitch(enabled: boolean, actorId: string, actorRole?: string): Promise<boolean> {
         if (actorRole && actorRole !== 'ADMIN' && actorRole !== 'SUPER_ADMIN') {
             throw new AppError('UNAUTHORIZED', 'Only Admin or Super Admin can toggle the global subscription switch.', 403);
         }
-        SubscriptionService.globalSubscriptionEnabled = enabled;
-        return SubscriptionService.globalSubscriptionEnabled;
+        assertNonBlank(actorId, 'ACTOR_REQUIRED', 'An actor identity is required to change the global subscription switch.');
+
+        const value = enabled ? 'true' : 'false';
+        await this.db.$transaction(async (tx) => {
+            await tx.systemSettings.upsert({
+                where: { key: GLOBAL_SUBSCRIPTION_SWITCH_KEY },
+                update: { value, updatedBy: actorId },
+                create: { key: GLOBAL_SUBSCRIPTION_SWITCH_KEY, value, updatedBy: actorId },
+            });
+            if (tx.auditLog) {
+                await tx.auditLog.create({
+                    data: {
+                        action: 'UPDATE',
+                        entityType: 'SystemSettings',
+                        entityId: SYSTEM_SETTINGS_AUDIT_ENTITY_ID,
+                        changes: { key: GLOBAL_SUBSCRIPTION_SWITCH_KEY, enabled },
+                        userId: actorId,
+                    },
+                });
+            }
+        });
+        // Write-through so this instance observes the change without waiting for the TTL.
+        this.switchCache = { value: enabled, fetchedAt: Date.now() };
+        return enabled;
     }
 
     async listPlans() {
@@ -179,20 +228,27 @@ export class SubscriptionService {
         }
 
         // Global switch check: when subscription enforcement is OFF, unrestricted access
-        if (!SubscriptionService.globalSubscriptionEnabled) {
+        if (!(await this.getGlobalSubscriptionSwitch())) {
             return { allowed: true, unlimited: true, limit: null, source: 'SUBSCRIPTION' };
         }
 
+        const now = new Date();
         const subscription = await this.db.subscription.findFirst({
             where: {
                 orgId,
                 status: { in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
-                currentPeriodEnd: { gt: new Date() },
+                currentPeriodEnd: { gt: now },
             },
             include: { entitlements: { where: { key } } },
             orderBy: { createdAt: 'desc' },
         });
-        if (!subscription) return { allowed: false, unlimited: false, limit: null, source: 'NONE' };
+        if (!subscription) {
+            // Lazy expiry reconciliation: a row still marked TRIALING/ACTIVE/PAST_DUE
+            // whose period has ended must transition to EXPIRED before access is
+            // denied. Conditional updateMany → idempotent and safe under concurrency.
+            await this.expireSubscriptionsForOrg(orgId);
+            return { allowed: false, unlimited: false, limit: null, source: 'NONE' };
+        }
         if (subscription.unlimitedAccess) return { allowed: true, unlimited: true, limit: null, source: 'SUBSCRIPTION' };
 
         const value = subscription.entitlements[0]?.value;
@@ -215,7 +271,7 @@ export class SubscriptionService {
         }
 
         // Global switch check
-        if (!SubscriptionService.globalSubscriptionEnabled) {
+        if (!(await this.getGlobalSubscriptionSwitch())) {
             return { unlimited: true, quantity: input.quantity };
         }
 
@@ -233,51 +289,185 @@ export class SubscriptionService {
             if (subscription.unlimitedAccess) return { unlimited: true, quantity: input.quantity };
 
             const limit = numericLimit(subscription.entitlements[0]?.value);
-            const current = await tx.usageRecord.findUnique({
-                where: {
-                    orgId_metric_periodStart_periodEnd: {
-                        orgId: input.orgId,
-                        metric: input.metric,
-                        periodStart: input.periodStart,
-                        periodEnd: input.periodEnd,
-                    },
+
+            // Atomic conditional increment (blueprint §R): the updateMany only
+            // fires when quantity + n stays within the limit, closing the
+            // check-then-increment race under concurrency and across instances.
+            const usage = await this.reserveUsageAtomically(tx, input, limit, subscription.id);
+            return { unlimited: false, quantity: usage };
+        });
+    }
+
+    /**
+     * Race-free usage reservation. First attempts a conditional increment that
+     * only applies when the result stays within the limit; falls back to creating
+     * the monthly row on first use, retrying the increment on unique-key races.
+     */
+    private async reserveUsageAtomically(
+        tx: BillingDb,
+        input: UsageInput,
+        limit: number | null,
+        subscriptionId: string,
+    ): Promise<number> {
+        const current = await tx.usageRecord.findUnique({
+            where: {
+                orgId_metric_periodStart_periodEnd: {
+                    orgId: input.orgId,
+                    metric: input.metric,
+                    periodStart: input.periodStart,
+                    periodEnd: input.periodEnd,
                 },
+            },
+        });
+        const currentQuantity = Number(current?.quantity ?? 0);
+
+        if (limit !== null && currentQuantity + input.quantity > limit) {
+            throw new AppError(
+                'USAGE_LIMIT_REACHED',
+                `The organization has reached its plan limit of ${limit}; current usage is ${currentQuantity}.`,
+                409,
+            );
+        }
+
+        if (current) {
+            const ceiling = limit === null ? Number.MAX_SAFE_INTEGER : limit - input.quantity;
+            const updated = await tx.usageRecord.updateMany({
+                where: {
+                    orgId: input.orgId,
+                    metric: input.metric,
+                    periodStart: input.periodStart,
+                    periodEnd: input.periodEnd,
+                    quantity: { lte: ceiling },
+                },
+                data: { quantity: { increment: input.quantity }, subscriptionId },
             });
-            const nextQuantity = Number(current?.quantity ?? 0) + input.quantity;
-            if (limit !== null && nextQuantity > limit) {
+            if (updated.count === 0) {
                 throw new AppError(
                     'USAGE_LIMIT_REACHED',
-                    `The organization has reached its plan limit of ${limit}; current usage is ${Number(current?.quantity ?? 0)}.`,
+                    `The organization has reached its plan limit of ${limit}.`,
                     409,
                 );
             }
+            return currentQuantity + input.quantity;
+        }
 
-            const usage = await tx.usageRecord.upsert({
-                where: {
-                    orgId_metric_periodStart_periodEnd: {
-                        orgId: input.orgId,
-                        metric: input.metric,
-                        periodStart: input.periodStart,
-                        periodEnd: input.periodEnd,
-                    },
-                },
-                create: {
+        try {
+            const created = await tx.usageRecord.create({
+                data: {
                     orgId: input.orgId,
-                    subscriptionId: subscription.id,
+                    subscriptionId,
                     metric: input.metric,
                     periodStart: input.periodStart,
                     periodEnd: input.periodEnd,
                     quantity: input.quantity,
                 },
-                update: { quantity: { increment: input.quantity }, subscriptionId: subscription.id },
             });
-            return { unlimited: false, quantity: usage.quantity };
+            return Number(created.quantity);
+        } catch (error) {
+            if (!isUniqueViolation(error)) throw error;
+            // A concurrent request created the row first: retry the conditional
+            // increment on the now-existing row.
+            const ceiling = limit === null ? Number.MAX_SAFE_INTEGER : limit - input.quantity;
+            const updated = await tx.usageRecord.updateMany({
+                where: {
+                    orgId: input.orgId,
+                    metric: input.metric,
+                    periodStart: input.periodStart,
+                    periodEnd: input.periodEnd,
+                    quantity: { lte: ceiling },
+                },
+                data: { quantity: { increment: input.quantity }, subscriptionId },
+            });
+            if (updated.count === 0) {
+                throw new AppError(
+                    'USAGE_LIMIT_REACHED',
+                    `The organization has reached its plan limit of ${limit}.`,
+                    409,
+                );
+            }
+            return input.quantity; // best-effort returned quantity; the row is authoritative
+        }
+    }
+
+    /**
+     * Idempotent expiry reconciliation (state machine, blueprint §I): transitions
+     * subscriptions whose period has ended — status still TRIALING/ACTIVE/PAST_DUE —
+     * to EXPIRED. A sub that ended while enforcement was OFF is expired the moment
+     * enforcement resumes; currentPeriodEnd is NEVER extended (no free time for the
+     * OFF window) and no payment/refund/cancellation events are emitted. The
+     * conditional updateMany excludes already-EXPIRED rows, so re-running is a
+     * no-op and concurrent runs converge to a single terminal state.
+     */
+    async reconcileExpiredSubscriptions(actorId?: string): Promise<number> {
+        const now = new Date();
+        return this.db.$transaction(async (tx) => {
+            const result = await tx.subscription.updateMany({
+                where: {
+                    status: { in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
+                    currentPeriodEnd: { lt: now },
+                },
+                data: {
+                    status: 'EXPIRED',
+                    ...(actorId ? { changedById: actorId } : {}),
+                },
+            });
+            if (result.count > 0 && tx.auditLog) {
+                await tx.auditLog.create({
+                    data: {
+                        action: 'UPDATE',
+                        entityType: 'Subscription',
+                        entityId: SYSTEM_SETTINGS_AUDIT_ENTITY_ID,
+                        changes: { from: 'ACTIVE_SET', to: 'EXPIRED', reason: 'PERIOD_ENDED', count: result.count },
+                        userId: actorId ?? null,
+                    },
+                });
+            }
+            return result.count;
+        });
+    }
+
+    /**
+     * Lazy per-org expiry reconciliation, invoked from getFeatureAccess when an org
+     * has no active-period subscription: flip any stale TRIALING/ACTIVE/PAST_DUE rows
+     * whose period has ended before denying access.
+     */
+    private async expireSubscriptionsForOrg(orgId: string): Promise<number> {
+        const now = new Date();
+        return this.db.$transaction(async (tx) => {
+            const result = await tx.subscription.updateMany({
+                where: {
+                    orgId,
+                    status: { in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
+                    currentPeriodEnd: { lt: now },
+                },
+                data: { status: 'EXPIRED' },
+            });
+            if (result.count > 0 && tx.auditLog) {
+                await tx.auditLog.create({
+                    data: {
+                        action: 'UPDATE',
+                        entityType: 'Subscription',
+                        entityId: SYSTEM_SETTINGS_AUDIT_ENTITY_ID,
+                        orgId,
+                        changes: { from: 'ACTIVE_SET', to: 'EXPIRED', reason: 'PERIOD_ENDED', count: result.count },
+                        userId: null,
+                    },
+                });
+            }
+            return result.count;
         });
     }
 
     /**
      * Super Admin grants Unlimited Access to an organization/owner.
      * Preserves subscription history while setting unlimitedAccess = true.
+     *
+     * Business rule: an organization without any subscription record is not a
+     * dead end — a subscription is provisioned first (ACTIVE, on the cheapest
+     * active plan, with that plan's entitlements) and unlimited access is
+     * granted on top of it. Revoking later returns the organization to real
+     * plan limits instead of leaving it in limbo. Owners are notified and the
+     * change is audited either way.
      */
     async grantUnlimitedAccess(orgId: string, actorId: string, actorRole: string) {
         assertNonBlank(orgId, 'ORG_REQUIRED', 'Organization is required.');
@@ -285,27 +475,107 @@ export class SubscriptionService {
             throw new AppError('UNAUTHORIZED', 'Only Super Admin can grant unlimited access.', 403);
         }
 
-        return this.db.$transaction(async (tx) => {
-            const subscription = await tx.subscription.findFirst({
+        const result = await this.db.$transaction(async (tx) => {
+            const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true, deletedAt: true } });
+            if (!org || org.deletedAt) {
+                throw new AppError('ORG_NOT_FOUND', 'Organization not found.', 404);
+            }
+
+            let subscription = await tx.subscription.findFirst({
                 where: { orgId, status: { in: [...ACTIVE_SUBSCRIPTION_STATUSES] } },
                 orderBy: { createdAt: 'desc' },
             });
+            let provisioned = false;
+
             if (!subscription) {
-                throw new AppError('SUBSCRIPTION_NOT_FOUND', 'No active subscription found to grant unlimited access.', 404);
+                // Provision before granting: cheapest active plan, no trial,
+                // long-lived period (the unlimited flag — not the calendar —
+                // is the gate; reconciliation never expires it away).
+                const plan = await tx.plan.findFirst({ where: { isActive: true }, orderBy: { amountMinor: 'asc' } });
+                if (!plan) {
+                    throw new AppError('PLAN_NOT_FOUND', 'No active plan exists to provision a subscription for this organization.', 404);
+                }
+                const periodStart = new Date();
+                const periodEnd = new Date(periodStart.getTime() + 100 * 365 * 24 * 60 * 60 * 1000);
+                subscription = await tx.subscription.create({
+                    data: {
+                        orgId,
+                        planId: plan.id,
+                        status: 'ACTIVE',
+                        provider: 'razorpay',
+                        currentPeriodStart: periodStart,
+                        currentPeriodEnd: periodEnd,
+                        unlimitedAccess: true,
+                        changedById: actorId,
+                    },
+                });
+                provisioned = true;
+
+                // The provisioned plan's entitlements keep the revoke path
+                // coherent: unlimited off → normal plan limits apply.
+                const limits = (plan.featureLimits as JsonObject) || {};
+                const entries = Object.entries(limits);
+                if (entries.length > 0) {
+                    await tx.entitlement.createMany({
+                        data: entries.map(([key, value]) => ({
+                            orgId,
+                            subscriptionId: subscription.id,
+                            key,
+                            value,
+                            source: 'PLAN',
+                            expiresAt: periodEnd,
+                        })),
+                    });
+                }
+            } else {
+                subscription = await tx.subscription.update({
+                    where: { id: subscription.id },
+                    data: { unlimitedAccess: true, changedById: actorId },
+                });
             }
 
-            const updated = await tx.subscription.update({
-                where: { id: subscription.id },
-                data: { unlimitedAccess: true, changedById: actorId },
-            });
+            if (tx.notification) {
+                const owners = await tx.user.findMany({
+                    where: { orgId, role: 'OWNER', deletedAt: null },
+                    select: { id: true },
+                });
+                if (owners.length > 0) {
+                    await tx.notification.createMany({
+                        data: owners.map((owner: { id: string }) => ({
+                            orgId,
+                            userId: owner.id,
+                            title: 'Unlimited access granted',
+                            body: 'PayMuster has granted your company unlimited access. All plan limits are lifted until further notice.',
+                            type: 'SUBSCRIPTION_UPDATE',
+                            deepLink: null,
+                        })),
+                    });
+                }
+            }
 
-            return updated;
+            if (tx.auditLog) {
+                await tx.auditLog.create({
+                    data: {
+                        action: provisioned ? 'CREATE' : 'UPDATE',
+                        entityType: 'Subscription',
+                        entityId: subscription.id,
+                        orgId,
+                        userId: actorId,
+                        changes: { unlimitedAccess: true, provisioned },
+                    },
+                });
+            }
+
+            return { ...subscription, provisioned };
         });
+
+        return result;
     }
 
     /**
      * Super Admin revokes Unlimited Access from an organization/owner.
-     * Restores the normal subscription plan entitlements.
+     * Restores the normal subscription plan entitlements (or the provisioned
+     * plan's limits when the subscription was provisioned by a grant).
      */
     async revokeUnlimitedAccess(orgId: string, actorId: string, actorRole: string) {
         assertNonBlank(orgId, 'ORG_REQUIRED', 'Organization is required.');
@@ -326,6 +596,38 @@ export class SubscriptionService {
                 where: { id: subscription.id },
                 data: { unlimitedAccess: false, changedById: actorId },
             });
+
+            if (tx.notification) {
+                const owners = await tx.user.findMany({
+                    where: { orgId, role: 'OWNER', deletedAt: null },
+                    select: { id: true },
+                });
+                if (owners.length > 0) {
+                    await tx.notification.createMany({
+                        data: owners.map((owner: { id: string }) => ({
+                            orgId,
+                            userId: owner.id,
+                            title: 'Unlimited access ended',
+                            body: 'Unlimited access for your company has ended. Normal plan limits now apply.',
+                            type: 'SUBSCRIPTION_UPDATE',
+                            deepLink: null,
+                        })),
+                    });
+                }
+            }
+
+            if (tx.auditLog) {
+                await tx.auditLog.create({
+                    data: {
+                        action: 'UPDATE',
+                        entityType: 'Subscription',
+                        entityId: subscription.id,
+                        orgId,
+                        userId: actorId,
+                        changes: { unlimitedAccess: false },
+                    },
+                });
+            }
 
             return updated;
         });

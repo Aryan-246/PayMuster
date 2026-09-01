@@ -23,6 +23,11 @@ router.get('/lookup', companyController.lookupCompany.bind(companyController));
 // Apply auth to all
 router.use(requireAuth);
 
+// MULTI-COMPANY READ PATH (blueprint §L): the actor's own switchable
+// companies. Auth-only (no tenant scope — it spans companies); with the flag
+// OFF the response is honestly empty and clients render no switcher.
+router.get('/memberships', companyController.getMemberships.bind(companyController));
+
 // OVERVIEW & SETTINGS
 router.get('/',
   requireTenant({ scope: 'COMPANY' }),

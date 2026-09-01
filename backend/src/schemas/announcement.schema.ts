@@ -61,3 +61,36 @@ export const acknowledgeAnnouncementParamsSchema = z
     .strict();
 
 export type DispatchAnnouncementInput = z.infer<typeof dispatchAnnouncementSchema>;
+
+// Tenant dispatch (blueprint C2): used by OWNER/ADMIN from their own org. orgId
+// is NEVER taken from the client — the service forces the actor's org — and the
+// SYSTEM (platform-wide) audience is not offered.
+export const tenantDispatchAnnouncementSchema = z
+    .object({
+        title: z.string().trim().min(2).max(120),
+        body: z.string().trim().min(2).max(2000),
+        type: z.enum(['WARNING', 'EMERGENCY', 'MEETING', 'HOLIDAY', 'INFORMATION']),
+        deepLink: internalAppPathSchema.optional(),
+        audience: z.enum(['ORGANIZATION', 'ROLE', 'USER']),
+        orgId: z.string().uuid().optional(),
+        audienceRole: z.enum(['OWNER', 'ADMIN', 'SUPERVISOR', 'ACCOUNTANT', 'STAFF', 'VIEWER']).optional(),
+        audienceUserId: z.string().uuid().optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+        if (value.audience === 'ROLE' && !value.audienceRole) {
+            context.addIssue({ code: 'custom', path: ['audienceRole'], message: 'audienceRole is required for a role announcement' });
+        }
+        if (value.audience === 'USER' && !value.audienceUserId) {
+            context.addIssue({ code: 'custom', path: ['audienceUserId'], message: 'audienceUserId is required for a user announcement' });
+        }
+        if (value.audience === 'ORGANIZATION' && (value.audienceRole || value.audienceUserId)) {
+            context.addIssue({ code: 'custom', path: ['audience'], message: 'Organization announcements cannot include a role or user target' });
+        }
+        if (value.audience === 'ROLE' && value.audienceUserId) {
+            context.addIssue({ code: 'custom', path: ['audienceUserId'], message: 'Role announcements cannot include a user target' });
+        }
+        if (value.audience === 'USER' && value.audienceRole) {
+            context.addIssue({ code: 'custom', path: ['audienceRole'], message: 'User announcements cannot include a role target' });
+        }
+    });

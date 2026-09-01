@@ -123,10 +123,25 @@ export const config = Object.freeze({
   geminiApiKey: process.env.GEMINI_API_KEY?.trim(),
   geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
   geminiEnabled: parseBoolean(process.env.AI_ENABLED, Boolean(process.env.GEMINI_API_KEY?.trim())),
+  // Per-call Gemini budget. Measured round-trip latency from this deployment
+  // to the Gemini API varies from ~3.5s to ~35s for a minimal prompt, so a
+  // 15s budget timed out most requests ("AI analysis timed out"). 60s covers
+  // the observed worst case with headroom; each chat round is still bounded
+  // individually and the overall deadline bounds the whole loop.
   geminiTimeoutMs: parsePositiveInteger(
     'GEMINI_TIMEOUT_MS',
     process.env.GEMINI_TIMEOUT_MS,
-    15_000,
+    60_000,
+  ),
+  // Overall budget for one admin AI chat request, covering every provider
+  // round-trip and tool execution. The per-call timeout (geminiTimeoutMs)
+  // bounds a single model call; this deadline bounds the whole agentic loop
+  // so a multi-tool conversation can never run unbounded (3 rounds × per-call
+  // budget + tool execution time).
+  aiOverallDeadlineMs: parsePositiveInteger(
+    'AI_OVERALL_DEADLINE_MS',
+    process.env.AI_OVERALL_DEADLINE_MS,
+    180_000,
   ),
   supabaseUrl: (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, ''),
   supabaseServiceRoleKey: (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim(),
@@ -207,6 +222,10 @@ export const config = Object.freeze({
   sentryFrontendDsn: process.env.SENTRY_FRONTEND_DSN?.trim() ?? '',
   sentryMobileDsn: process.env.SENTRY_MOBILE_DSN?.trim() ?? '',
   redisEnabled: parseBoolean(process.env.REDIS_ENABLED, false),
+  // Multi-company membership mode (blueprint §L): DEFAULT OFF. When off, the
+  // tenant middleware's single user.orgId check is authoritative and the
+  // memberships table is never consulted.
+  multiCompanyEnabled: parseBoolean(process.env.MULTI_COMPANY_ENABLED, false),
   redisUrl: process.env.REDIS_URL?.trim() ?? '',
   upstashRedisRestUrl: process.env.UPSTASH_REDIS_REST_URL?.trim() ?? '',
   upstashRedisRestToken: process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ?? '',

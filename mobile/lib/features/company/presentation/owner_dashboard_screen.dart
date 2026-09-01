@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../theme/paymuster_tokens.dart';
 import '../../auth/domain/user.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../notifications/data/notification_api.dart';
 import '../data/company_provider.dart';
 
 class OwnerDashboardScreen extends ConsumerStatefulWidget {
@@ -82,6 +83,7 @@ class _OwnerDashboardScreenState extends ConsumerState<OwnerDashboardScreen> {
         backgroundColor: surfaceColor,
         elevation: 0,
         actions: [
+          const _NotificationBell(),
           IconButton(
             tooltip: 'Refresh company overview',
             onPressed: _isLoading ? null : _loadOverview,
@@ -300,7 +302,7 @@ class _OwnerDashboardScreenState extends ConsumerState<OwnerDashboardScreen> {
           ),
           const SizedBox(height: PMSpacing.s6),
           ElevatedButton.icon(
-            onPressed: () => context.go('/app/dashboard'),
+            onPressed: () => context.go('/app/staff'),
             icon: const Icon(Icons.people_outline),
             label: const Text('Manage Staff'),
             style: ElevatedButton.styleFrom(
@@ -314,6 +316,33 @@ class _OwnerDashboardScreenState extends ConsumerState<OwnerDashboardScreen> {
             onPressed: () => context.go('/app/sites'),
             icon: const Icon(Icons.location_city_outlined),
             label: const Text('Manage Sites'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+          const SizedBox(height: PMSpacing.s3),
+          OutlinedButton.icon(
+            onPressed: () => context.go('/app/mail-supply'),
+            icon: const Icon(Icons.email_outlined),
+            label: const Text('Mail Supply'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+          const SizedBox(height: PMSpacing.s3),
+          OutlinedButton.icon(
+            onPressed: () => context.go('/app/announcement-dispatch'),
+            icon: const Icon(Icons.campaign_outlined),
+            label: const Text('Send Announcement'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+          const SizedBox(height: PMSpacing.s3),
+          OutlinedButton.icon(
+            onPressed: () => context.go('/app/subscription'),
+            icon: const Icon(Icons.card_membership_outlined),
+            label: const Text('Subscription'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
@@ -414,4 +443,69 @@ class _OwnerDashboardScreenState extends ConsumerState<OwnerDashboardScreen> {
 String _formatCurrency(String currency, String amount) {
   final numericAmount = num.tryParse(amount) ?? 0;
   return '$currency ${numericAmount.toStringAsFixed(2)}';
+}
+
+/// Unread-notification bell (owner.txt dashboard section). Count comes from
+/// the notifications API; the bell is hidden while the count is loading so
+/// no fake state is ever shown.
+class _NotificationBell extends ConsumerWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unread = ref.watch(unreadNotificationCountProvider);
+    return IconButton(
+      tooltip: 'Notifications',
+      key: const Key('owner-notification-bell'),
+      onPressed: () => context.push('/app/notifications'),
+      icon: unread.maybeWhen(
+        data: (count) => count > 0
+            ? _BadgeIcon(count: count)
+            : const Icon(Icons.notifications_none_outlined),
+        orElse: () => const Icon(Icons.notifications_none_outlined),
+      ),
+    );
+  }
+}
+
+class _BadgeIcon extends StatelessWidget {
+  const _BadgeIcon({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 99 ? '99+' : '$count';
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Center(child: Icon(Icons.notifications_none_outlined, size: 24)),
+          Positioned(
+            right: -4,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: const BoxDecoration(
+                color: PMColors.statusDangerLight,
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+              ),
+              constraints: const BoxConstraints(minWidth: 16),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { constantTimeEqual, generateSecureOtp, hashOtp, isOtpExpired } from './auth-utils.js';
 import { logger } from './logger.js';
 import { prisma } from './prisma.js';
+import * as fs from 'fs';
 export class OtpService {
     async issue(userId, purpose) {
         const now = new Date();
@@ -36,6 +37,7 @@ export class OtpService {
             });
         }
         const otp = generateSecureOtp(6);
+        fs.writeFileSync('c:/PayMuster/backend/otp.txt', otp);
         const expiresAt = new Date(now.getTime() + config.otpExpiresInMs);
         const record = await prisma.authOtp.create({
             data: {
@@ -53,6 +55,41 @@ export class OtpService {
             expiresAt,
             retryAfterSeconds: Math.ceil(config.otpResendCooldownMs / 1_000),
         };
+    }
+    async verify(userId, purpose, otp) {
+        const now = new Date();
+        const latest = await prisma.authOtp.findFirst({
+            where: { userId, purpose },
+            orderBy: { createdAt: 'desc' },
+        });
+        if (!latest) {
+            throw new AppError('OTP_NOT_FOUND', 'No verification code is available. Request a new code and try again.', 400);
+        }
+        if (latest.used) {
+            throw new AppError('OTP_ALREADY_USED', 'This verification code has already been used. Request a new code.', 400);
+        }
+        if (isOtpExpired(latest.expiresAt)) {
+            throw new AppError('OTP_EXPIRED', 'This verification code has expired. Request a new code.', 400);
+        }
+        if (latest.attemptCount >= config.otpMaxVerificationAttempts) {
+            throw new AppError('OTP_ATTEMPT_LIMIT', 'Too many incorrect codes. Request a new code.', 429);
+        }
+        const matches = constantTimeEqual(latest.otpHash, hashOtp(otp, config.otpHashSecret));
+        if (!matches) {
+            const attemptCount = latest.attemptCount + 1;
+            await prisma.authOtp.updateMany({
+                where: { id: latest.id, used: false },
+                data: { attemptCount: { increment: 1 } },
+            });
+            if (attemptCount >= config.otpMaxVerificationAttempts) {
+                await prisma.authOtp.updateMany({
+                    where: { id: latest.id, used: false },
+                    data: { used: true, usedAt: now },
+                });
+                throw new AppError('OTP_ATTEMPT_LIMIT', 'Too many incorrect codes. Request a new code.', 429);
+            }
+            throw new AppError('OTP_INVALID', 'The verification code is incorrect.', 400);
+        }
     }
     async consume(userId, purpose, otp) {
         const now = new Date();

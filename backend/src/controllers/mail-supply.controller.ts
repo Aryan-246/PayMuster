@@ -4,11 +4,12 @@ import { logger } from '../lib/logger.js';
 import { AppError } from '../lib/app-error.js';
 
 /**
- * Mail Supply Controller — RBAC-protected endpoints for email sending.
+ * Mail Supply Controller — endpoints for email campaigns.
  *
- * ADMIN / SUPER_ADMIN → full access (all targets)
- * OWNER → own staff only
- * Other roles → DENIED
+ * Authorization is centralized in the route guard: requireAuth → requireTenant
+ * (server-authoritative orgId) → requirePermission('manage_mail'). Roles:
+ * SUPER_ADMIN / ADMIN / OWNER hold manage_mail; all others are denied 403 by
+ * the middleware before reaching the controller.
  */
 
 function getContext(req: Request) {
@@ -16,22 +17,16 @@ function getContext(req: Request) {
     if (!user) {
         throw new AppError('UNAUTHENTICATED', 'Authentication required.', 401);
     }
-    const orgId = req.context?.tenant?.companyId || user.orgId || undefined;
+    // Tenant is now established server-side by requireTenant; the client can
+    // never choose the orgId. (For SUPER_ADMIN the tenant middleware allows an
+    // org-less platform context; mail targeting scope is enforced in the service.)
+    const orgId = req.context?.tenant?.companyId || undefined;
     return { userId: user.id, role: user.role, orgId };
-}
-
-function assertMailRole(role: string): void {
-    const allowed = ['ADMIN', 'SUPER_ADMIN', 'OWNER'];
-    if (!allowed.includes(role)) {
-        throw new AppError('FORBIDDEN', 'Mail supply is restricted to Owner and Admin roles.', 403);
-    }
 }
 
 export async function getMailUsage(req: Request, res: Response, next: NextFunction) {
     try {
         const ctx = getContext(req);
-        assertMailRole(ctx.role);
-
         const usage = await mailSupplyService.getUsage(ctx.orgId, ctx.role);
         res.json({ success: true, data: usage });
     } catch (err) {
@@ -42,8 +37,6 @@ export async function getMailUsage(req: Request, res: Response, next: NextFuncti
 export async function previewMail(req: Request, res: Response, next: NextFunction) {
     try {
         const ctx = getContext(req);
-        assertMailRole(ctx.role);
-
         const { subject, body, targetType, targetRole, targetUserId } = req.body;
         if (!subject || !body || !targetType) {
             throw new AppError('VALIDATION_ERROR', 'subject, body, and targetType are required.', 400);
@@ -69,8 +62,6 @@ export async function previewMail(req: Request, res: Response, next: NextFunctio
 export async function sendMail(req: Request, res: Response, next: NextFunction) {
     try {
         const ctx = getContext(req);
-        assertMailRole(ctx.role);
-
         const { subject, body, targetType, targetRole, targetUserId } = req.body;
         if (!subject || !body || !targetType) {
             throw new AppError('VALIDATION_ERROR', 'subject, body, and targetType are required.', 400);
@@ -86,6 +77,10 @@ export async function sendMail(req: Request, res: Response, next: NextFunction) 
             targetRole,
             targetUserId,
             requestId: req.id,
+            // Idempotency-Key from the client header (falls back to a fresh key).
+            idempotencyKey: typeof req.headers['idempotency-key'] === 'string'
+                ? req.headers['idempotency-key']
+                : undefined,
         });
 
         logger.info('mail_supply.api_send', {
@@ -106,8 +101,6 @@ export async function sendMail(req: Request, res: Response, next: NextFunction) 
 export async function getMailHistory(req: Request, res: Response, next: NextFunction) {
     try {
         const ctx = getContext(req);
-        assertMailRole(ctx.role);
-
         const limit = Math.min(parseInt(String(req.query.limit), 10) || 50, 200);
         const history = await mailSupplyService.getHistory(ctx.orgId, limit);
         res.json({ success: true, data: history });

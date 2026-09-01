@@ -28,18 +28,30 @@ import 'features/dashboard/presentation/career_screen.dart';
 import 'features/dashboard/presentation/documents_screen.dart';
 import 'features/dashboard/presentation/verification_screen.dart';
 
+import 'features/company/presentation/company_switch_screen.dart';
 import 'features/company/presentation/join_company_screen.dart';
 import 'features/company/presentation/owner_dashboard_screen.dart';
 import 'features/company/presentation/owner_request_screen.dart';
+import 'features/company/presentation/company_info_screen.dart';
+import 'features/company/presentation/join_requests_screen.dart';
 import 'features/billing/presentation/billing_screen.dart';
+import 'features/mail_supply/presentation/mail_supply_screen.dart';
+import 'features/announcements/presentation/announcement_dispatch_screen.dart';
+import 'features/billing/presentation/subscription_state_screen.dart';
+import 'features/notifications/presentation/notification_center_screen.dart';
+import 'features/ai/presentation/ai_assistant_screen.dart';
 
 import 'features/sites/presentation/sites_screen.dart';
 import 'features/announcements/presentation/notices_screen.dart';
 import 'features/staff/presentation/worker_profile_screen.dart';
+import 'features/staff/presentation/staff_directory_screen.dart';
+import 'features/staff/presentation/staff_detail_screen.dart';
+import 'features/staff/presentation/add_staff_screen.dart';
 import 'features/attendance/presentation/attendance_screen.dart';
 import 'features/payroll/presentation/payroll_screen.dart';
 import 'features/settings/presentation/profile_screen.dart';
 import 'features/settings/presentation/settings_screen.dart';
+import 'features/reviews/presentation/review_submit_screen.dart';
 
 import 'features/admin/presentation/admin_dashboard_screen.dart';
 import 'features/admin/presentation/admin_users_screen.dart';
@@ -48,6 +60,7 @@ import 'features/admin/presentation/admin_owner_requests_screen.dart';
 import 'features/admin/presentation/admin_companies_screen.dart';
 import 'features/admin/presentation/admin_company_detail_screen.dart';
 import 'features/admin/presentation/admin_sites_screen.dart';
+import 'features/admin/presentation/admin_site_detail_screen.dart';
 import 'features/admin/presentation/admin_attendance_screen.dart';
 import 'features/admin/presentation/admin_payroll_screen.dart';
 import 'features/admin/presentation/admin_audit_logs_screen.dart';
@@ -58,6 +71,17 @@ import 'features/admin/presentation/admin_ai_screen.dart';
 import 'features/admin/presentation/admin_more_screen.dart';
 import 'features/admin/presentation/admin_settings_screen.dart';
 import 'features/admin/presentation/admin_profile_screen.dart';
+import 'features/admin/presentation/admin_subscriptions_screen.dart';
+import 'features/admin/presentation/admin_subscription_detail_screen.dart';
+import 'features/admin/presentation/admin_payments_screen.dart';
+import 'features/admin/presentation/admin_mail_supply_screen.dart';
+import 'features/admin/presentation/admin_mail_composer_screen.dart';
+import 'features/admin/presentation/admin_announcements_screen.dart';
+import 'features/admin/presentation/admin_reviews_screen.dart';
+import 'features/admin/presentation/admin_review_detail_screen.dart';
+import 'features/admin/presentation/admin_provider_health_screen.dart';
+import 'features/admin/presentation/admin_owners_screen.dart';
+import 'features/admin/presentation/admin_reports_screen.dart';
 import 'features/admin/presentation/admin_scaffold.dart';
 import 'features/auth/domain/user.dart';
 
@@ -246,6 +270,10 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: '/admin/dashboard',
                 builder: (context, state) => const AdminDashboardScreen(),
               ),
+              GoRoute(
+                path: '/admin/reports',
+                builder: (context, state) => const AdminReportsScreen(),
+              ),
             ],
           ),
           StatefulShellBranch(
@@ -270,6 +298,10 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: '/admin/owner-requests',
                 builder: (context, state) => const AdminOwnerRequestsScreen(),
               ),
+              GoRoute(
+                path: '/admin/owners',
+                builder: (context, state) => const AdminOwnersScreen(),
+              ),
             ],
           ),
           StatefulShellBranch(
@@ -290,6 +322,14 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/admin/sites',
                 builder: (context, state) => const AdminSitesScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => AdminSiteDetailScreen(
+                      siteId: state.pathParameters['id']!,
+                    ),
+                  ),
+                ],
               ),
               GoRoute(
                 path: '/admin/attendance',
@@ -298,6 +338,50 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/admin/payroll',
                 builder: (context, state) => const AdminPayrollScreen(),
+              ),
+              GoRoute(
+                path: '/admin/subscriptions',
+                builder: (context, state) => const AdminSubscriptionsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':orgId',
+                    builder: (context, state) =>
+                        AdminSubscriptionDetailScreen(
+                          orgId: state.pathParameters['orgId']!,
+                        ),
+                  ),
+                ],
+              ),
+              GoRoute(
+                path: '/admin/payments',
+                builder: (context, state) => const AdminPaymentsScreen(),
+              ),
+              GoRoute(
+                path: '/admin/mail',
+                builder: (context, state) => const AdminMailSupplyScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'compose',
+                    builder: (context, state) =>
+                        const AdminMailComposerScreen(),
+                  ),
+                ],
+              ),
+              GoRoute(
+                path: '/admin/announcements',
+                builder: (context, state) => const AdminAnnouncementsScreen(),
+              ),
+              GoRoute(
+                path: '/admin/reviews',
+                builder: (context, state) => const AdminReviewsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => AdminReviewDetailScreen(
+                      reviewId: state.pathParameters['id']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -332,6 +416,11 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/admin/ai',
                 builder: (context, state) => const AdminAiScreen(),
+              ),
+              GoRoute(
+                path: '/admin/provider-health',
+                builder: (context, state) =>
+                    const AdminProviderHealthScreen(),
               ),
               GoRoute(
                 path: '/admin/settings',
@@ -370,6 +459,24 @@ final routerProvider = Provider<GoRouter>((ref) {
                 builder: (context, state) => const BillingScreen(),
               ),
               GoRoute(
+                path: '/app/mail-supply',
+                builder: (context, state) => const MailSupplyScreen(),
+              ),
+              GoRoute(
+                path: '/app/announcement-dispatch',
+                builder: (context, state) =>
+                    const AnnouncementDispatchScreen(),
+              ),
+              GoRoute(
+                path: '/app/subscription',
+                builder: (context, state) =>
+                    const SubscriptionStateScreen(),
+              ),
+              GoRoute(
+                path: '/app/company-switch',
+                builder: (context, state) => const CompanySwitchScreen(),
+              ),
+              GoRoute(
                 path: '/app/owner-request',
                 builder: (context, state) => const OwnerRequestScreen(),
               ),
@@ -394,6 +501,45 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: '/app/workers/:id',
                 builder: (context, state) =>
                     WorkerProfileScreen(workerId: state.pathParameters['id']!),
+              ),
+
+              // Owner staff module (owner.txt staff section).
+              GoRoute(
+                path: '/app/staff',
+                builder: (context, state) => const StaffDirectoryScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'new',
+                    builder: (context, state) => const AddStaffScreen(),
+                  ),
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => StaffDetailScreen(
+                      staffId: state.pathParameters['id']!,
+                    ),
+                  ),
+                ],
+              ),
+              GoRoute(
+                path: '/app/notifications',
+                builder: (context, state) =>
+                    const NotificationCenterScreen(),
+              ),
+              GoRoute(
+                path: '/app/company-info',
+                builder: (context, state) => const CompanyInfoScreen(),
+              ),
+              GoRoute(
+                path: '/app/join-requests',
+                builder: (context, state) => const JoinRequestsScreen(),
+              ),
+              GoRoute(
+                path: '/app/ai-assistant',
+                builder: (context, state) => const AiAssistantScreen(),
+              ),
+              GoRoute(
+                path: '/app/review',
+                builder: (context, state) => const ReviewSubmitScreen(),
               ),
             ],
           ),

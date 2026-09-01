@@ -207,3 +207,103 @@ test('evidence normalizes safe metadata and rejects a cross-tenant source', asyn
     assert.equal(evidence.sha256, 'a'.repeat(64));
     assert.equal(evidence.mimeType, 'application/pdf');
 });
+
+test('listPayments scopes to the org, applies filters, and paginates', async () => {
+    const calls: Array<{ delegate: string; args: any }> = [];
+    const db: Record<string, any> = {
+        payment: {
+            findMany: async (args: any) => {
+                calls.push({ delegate: 'payment.findMany', args });
+                return [{ id: paymentId, amount: '500.00', staff: { firstName: 'Asha' } }];
+            },
+            count: async (args: any) => {
+                calls.push({ delegate: 'payment.count', args });
+                return 1;
+            },
+        },
+    };
+    const service = new FinancialIntegrityService(db as any);
+
+    const result = await service.listPayments(orgId, {
+        staffId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        status: 'PAID',
+        page: 2,
+        limit: 25,
+    });
+
+    const findArgs = calls.find((call) => call.delegate === 'payment.findMany')!.args;
+    const countArgs = calls.find((call) => call.delegate === 'payment.count')!.args;
+    assert.equal(findArgs.where.orgId, orgId);
+    assert.equal(findArgs.where.deletedAt, null);
+    assert.equal(findArgs.where.staffId, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    assert.equal(findArgs.where.status, 'PAID');
+    assert.equal(findArgs.skip, 25);
+    assert.equal(findArgs.take, 25);
+    assert.deepEqual(countArgs.where, findArgs.where);
+    assert.equal(result.total, 1);
+    assert.equal(result.totalPages, 1);
+    assert.equal(result.payments[0].amount, '500.00');
+});
+
+test('listPayments never exposes bank fields — only payment lifecycle data', async () => {
+    const calls: Array<{ delegate: string; args: any }> = [];
+    const db: Record<string, any> = {
+        payment: {
+            findMany: async (args: any) => {
+                calls.push({ delegate: 'payment.findMany', args });
+                return [];
+            },
+            count: async () => 0,
+        },
+    };
+    const service = new FinancialIntegrityService(db as any);
+
+    await service.listPayments(orgId, { page: 1, limit: 50 });
+
+    const selected = Object.keys(calls.find((call) => call.delegate === 'payment.findMany')!.args.select);
+    assert.ok(selected.includes('amount'));
+    assert.ok(selected.includes('status'));
+    assert.equal(selected.includes('staffId'), false);
+});
+
+test('listExpenses scopes to the org, includes approvals, and paginates', async () => {
+    const calls: Array<{ delegate: string; args: any }> = [];
+    const db: Record<string, any> = {
+        expense: {
+            findMany: async (args: any) => {
+                calls.push({ delegate: 'expense.findMany', args });
+                return [{
+                    id: expenseId,
+                    amount: '1200.50',
+                    site: { name: 'Mohali Tower' },
+                    approvals: [{ action: 'APPROVED' }],
+                }];
+            },
+            count: async (args: any) => {
+                calls.push({ delegate: 'expense.count', args });
+                return 11;
+            },
+        },
+    };
+    const service = new FinancialIntegrityService(db as any);
+
+    const result = await service.listExpenses(orgId, {
+        siteId,
+        status: 'APPROVED',
+        category: 'cement',
+        page: 1,
+        limit: 10,
+    });
+
+    const findArgs = calls.find((call) => call.delegate === 'expense.findMany')!.args;
+    assert.equal(findArgs.where.orgId, orgId);
+    assert.equal(findArgs.where.siteId, siteId);
+    assert.equal(findArgs.where.status, 'APPROVED');
+    assert.equal(findArgs.where.category.mode, 'insensitive');
+    assert.equal(findArgs.skip, 0);
+    assert.equal(findArgs.take, 10);
+    assert.ok(findArgs.select.approvals);
+    assert.equal(result.total, 11);
+    assert.equal(result.totalPages, 2);
+    assert.equal(result.expenses[0].approvals[0].action, 'APPROVED');
+});

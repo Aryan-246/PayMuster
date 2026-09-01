@@ -22,7 +22,7 @@ export class ClerkAdapter implements AuthProvider {
             provider: this.name,
             kind: 'AUTH',
             enabled,
-            status: !enabled ? 'DISABLED' : 'UNAVAILABLE',
+            status: !enabled ? 'DISABLED' : 'ENVIRONMENT_BLOCKED',
             readiness: !enabled ? 'DISABLED' : 'ENVIRONMENT_BLOCKED',
             fallback: 'paymuster-auth',
             checkedAt: new Date().toISOString(),

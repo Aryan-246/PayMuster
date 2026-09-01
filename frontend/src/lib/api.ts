@@ -25,10 +25,27 @@ export function buildApiUrl(path: string) {
   return getApiBaseUrl() + (path.startsWith('/') ? path : '/' + path);
 }
 
-export async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-  let response: Response;
+/**
+ * Handler invoked when an authenticated request receives a 401. It must return
+ * a fresh access token, or null when the session cannot be recovered (the
+ * caller then surfaces the original error). Registered by the session layer to
+ * avoid an api <-> auth-session import cycle.
+ */
+export type UnauthorizedHandler = () => Promise<string | null>;
+
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler;
+}
+
+function isAuthPath(path: string) {
+  return path === '/auth/login' || path === '/auth/refresh' || path === '/auth/logout' || path.startsWith('/auth/');
+}
+
+async function fetchJson(path: string, init: RequestInit): Promise<Response> {
   try {
-    response = await fetch(buildApiUrl(path), {
+    return await fetch(buildApiUrl(path), {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -38,6 +55,24 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
   } catch (error) {
     observability.captureException(error, { operation: 'requestJson', path });
     throw new ApiError('Unable to reach PayMuster. Check your connection and try again.', 0, 'NETWORK_ERROR');
+  }
+}
+
+export async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let response = await fetchJson(path, init);
+
+  // Session-expiry recovery: a 401 on an authenticated request triggers one
+  // refresh + retry via the registered handler. A second 401 (or an auth-path
+  // failure) falls through to the normal error surface — no infinite loops.
+  if (response.status === 401 && unauthorizedHandler && !isAuthPath(path)) {
+    const freshToken = await unauthorizedHandler();
+    if (freshToken) {
+      const headers = { ...(init.headers as Record<string, string> | undefined) };
+      if (headers.Authorization !== undefined) {
+        headers.Authorization = `Bearer ${freshToken}`;
+      }
+      response = await fetchJson(path, { ...init, headers });
+    }
   }
 
   const raw = await response.text();
@@ -81,12 +116,32 @@ export function postJson<T>(path: string, payload: unknown): Promise<T> {
   });
 }
 
-export function authenticatedPostJson<T>(path: string, accessToken: string, payload: unknown): Promise<T> {
+export function authenticatedPostJson<T>(
+  path: string,
+  accessToken: string,
+  payload: unknown,
+  headers?: Record<string, string>,
+): Promise<T> {
   return requestJson<T>(path, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      ...headers,
     },
     body: JSON.stringify(payload),
+  });
+}
+
+export function authenticatedGetJson<T>(
+  path: string,
+  accessToken: string,
+  headers?: Record<string, string>,
+): Promise<T> {
+  return requestJson<T>(path, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...headers,
+    },
   });
 }

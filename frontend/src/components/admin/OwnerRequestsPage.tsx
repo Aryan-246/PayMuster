@@ -1,43 +1,75 @@
 import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../i18n/I18nProvider';
+import { authenticatedGetJson, authenticatedPostJson, ApiError } from '../../lib/api';
+import type { AuthSession } from '../../lib/auth-session';
 import { GlassPanel } from '../ui/GlassPanel';
+import { LoadingState } from '../ui/LoadingState';
 import { BrandButton } from '../ui/BrandButton';
 import { DataTable } from '../ui/DataTable';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
-interface OwnerRequest {
+// Mirrors adminService.getOwnerRequests' include shape — GET /api/v1/admin/owner-requests
+// (manage_system = SUPER_ADMIN-only server-side).
+interface OwnerRequestApiRecord {
   id: string;
-  publicId: string;
-  name: string;
-  email: string;
-  role: string;
-  status: 'pending' | 'approved' | 'rejected';
+  publicId: string | null;
+  companyName: string;
+  gstin: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: string;
+  user: {
+    publicId: string | null;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    role: string;
+  } | null;
 }
 
-const mockRequests: OwnerRequest[] = [
-  { id: '1', publicId: 'USR-001', name: 'Aisha Patel', email: 'aisha@example.com', role: 'Owner', status: 'pending', createdAt: '2026-07-28' },
-  { id: '2', publicId: 'USR-002', name: 'Raj Singh', email: 'raj@example.com', role: 'Owner', status: 'pending', createdAt: '2026-07-29' },
-  { id: '3', publicId: 'USR-003', name: 'Priya Sharma', email: 'priya@example.com', role: 'Owner', status: 'approved', createdAt: '2026-07-25' },
-  { id: '4', publicId: 'USR-004', name: 'Karan Mehta', email: 'karan@example.com', role: 'Owner', status: 'rejected', createdAt: '2026-07-20' },
-];
+interface OwnerRequestsEnvelope {
+  success: boolean;
+  data: OwnerRequestApiRecord[];
+  meta: { requestId: string };
+}
 
-export function OwnerRequestsPage() {
+export function OwnerRequestsPage({ session }: { session: AuthSession }) {
   const { t } = useI18n();
-  const [requests, setRequests] = useState<OwnerRequest[]>(mockRequests);
+  const queryClient = useQueryClient();
+  const [actingOn, setActingOn] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Rejection is irreversible — it always asks for explicit confirmation.
+  const [rejecting, setRejecting] = useState<OwnerRequestApiRecord | null>(null);
 
-  const handleApprove = (id: string) => {
-    setRequests((prev) =>
-      prev.map((req) => (req.id === id ? { ...req, status: 'approved' } : req)),
-    );
+  const requestsQuery = useQuery({
+    queryKey: ['owner-requests', session.user.publicId],
+    queryFn: () => authenticatedGetJson<OwnerRequestsEnvelope>('/api/v1/admin/owner-requests', session.accessToken),
+  });
+
+  const requests = requestsQuery.data?.data ?? [];
+  const pendingRequests = requests.filter((r) => r.status === 'PENDING');
+
+  const resolveRequest = async (id: string, action: 'approve' | 'reject') => {
+    setActingOn(id);
+    setActionError(null);
+    try {
+      if (action === 'approve') {
+        await authenticatedPostJson(`/api/v1/admin/owner-requests/${id}/approve`, session.accessToken, {});
+      } else {
+        await authenticatedPostJson(`/api/v1/admin/owner-requests/${id}/reject`, session.accessToken, {});
+      }
+      // Authoritative refresh after the mutation — the table re-renders from
+      // the real server state, never from locally patched rows.
+      await queryClient.invalidateQueries({ queryKey: ['owner-requests'] });
+    } catch (error) {
+      setActionError(
+        error instanceof ApiError ? error.message : `${t('admin.actionFailed')}: ${action}`,
+      );
+    } finally {
+      setActingOn(null);
+      setRejecting(null);
+    }
   };
-
-  const handleReject = (id: string) => {
-    setRequests((prev) =>
-      prev.map((req) => (req.id === id ? { ...req, status: 'rejected' } : req)),
-    );
-  };
-
-  const pendingRequests = requests.filter((r) => r.status === 'pending');
 
   return (
     <div className="space-y-pm-4">
@@ -47,54 +79,116 @@ export function OwnerRequestsPage() {
         <p className="mt-pm-3 text-sm text-pm-text-secondary">{t('admin.ownerRequestsDescription')}</p>
       </GlassPanel>
 
-      <section className="grid gap-pm-4 md:grid-cols-3">
+      {requestsQuery.isPending ? (
+        <LoadingState />
+      ) : requestsQuery.isError ? (
         <GlassPanel>
-          <p className="text-sm text-pm-text-secondary">{t('admin.totalRequests')}</p>
-          <p className="mt-pm-2 text-2xl font-semibold text-pm-text-primary">{requests.length}</p>
-        </GlassPanel>
-        <GlassPanel>
-          <p className="text-sm text-pm-text-secondary">{t('admin.pending')}</p>
-          <p className="mt-pm-2 text-2xl font-semibold text-pm-warning">{pendingRequests.length}</p>
-        </GlassPanel>
-        <GlassPanel>
-          <p className="text-sm text-pm-text-secondary">{t('admin.approved')}</p>
-          <p className="mt-pm-2 text-2xl font-semibold text-pm-success">{requests.filter((r) => r.status === 'approved').length}</p>
-        </GlassPanel>
-      </section>
-
-      <GlassPanel>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-pm-text-primary">{t('admin.requestsList')}</p>
-            <p className="text-sm text-pm-text-secondary">{t('admin.requestsListDescription')}</p>
+          <p className="text-sm font-semibold text-pm-text-primary">{t('admin.requestsLoadError')}</p>
+          <div className="mt-pm-4">
+            <BrandButton tone="secondary" onClick={() => void requestsQuery.refetch()}>
+              {t('common.retry')}
+            </BrandButton>
           </div>
-        </div>
-        <div className="mt-pm-4">
-          <DataTable
-            rows={requests.map((req) => ({
-              id: req.id,
-              name: req.name,
-              status: req.status,
-              value: req.publicId,
-            }))}
-          />
-        </div>
-        <div className="mt-pm-4 flex flex-wrap gap-pm-3">
-          {pendingRequests.map((req) => (
-            <div key={req.id} className="flex items-center gap-pm-3 rounded-pm-lg border border-pm-border bg-pm-raised p-pm-3">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-pm-text-primary">{req.name}</p>
-                <p className="text-xs text-pm-text-secondary">{req.publicId} · {req.email}</p>
+        </GlassPanel>
+      ) : (
+        <>
+          <section className="grid gap-pm-4 md:grid-cols-3">
+            <GlassPanel>
+              <p className="text-sm text-pm-text-secondary">{t('admin.totalRequests')}</p>
+              <p className="mt-pm-2 text-2xl font-semibold text-pm-text-primary">{requests.length}</p>
+            </GlassPanel>
+            <GlassPanel>
+              <p className="text-sm text-pm-text-secondary">{t('admin.pending')}</p>
+              <p className="mt-pm-2 text-2xl font-semibold text-pm-warning">{pendingRequests.length}</p>
+            </GlassPanel>
+            <GlassPanel>
+              <p className="text-sm text-pm-text-secondary">{t('admin.approved')}</p>
+              <p className="mt-pm-2 text-2xl font-semibold text-pm-success">
+                {requests.filter((r) => r.status === 'APPROVED').length}
+              </p>
+            </GlassPanel>
+          </section>
+
+          <GlassPanel>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-pm-text-primary">{t('admin.requestsList')}</p>
+                <p className="text-sm text-pm-text-secondary">{t('admin.requestsListDescription')}</p>
               </div>
-              <BrandButton tone="primary" onClick={() => handleApprove(req.id)}>{t('admin.approve')}</BrandButton>
-              <BrandButton tone="secondary" onClick={() => handleReject(req.id)}>{t('admin.reject')}</BrandButton>
             </div>
-          ))}
-          {pendingRequests.length === 0 && (
-            <p className="text-sm text-pm-text-secondary">{t('admin.noPendingRequests')}</p>
-          )}
-        </div>
-      </GlassPanel>
+            <div className="mt-pm-4">
+              <DataTable
+                rows={requests.map((req) => ({
+                  id: req.id,
+                  name: req.user
+                    ? `${req.user.firstName ?? ''} ${req.user.lastName ?? ''}`.trim() || req.user.email
+                    : t('attendance.unassigned'),
+                  status: req.status.toLowerCase(),
+                  statusLabel: req.status === 'PENDING'
+                    ? t('admin.pending')
+                    : req.status === 'APPROVED'
+                      ? t('admin.approved')
+                      : t('admin.reject'),
+                  value: `${req.companyName}${req.publicId ? ` · ${req.publicId}` : ''}`,
+                }))}
+              />
+            </div>
+            {actionError && (
+              <div className="mt-pm-4 rounded-pm-lg border border-pm-danger/30 bg-pm-danger/10 p-pm-3">
+                <p className="text-sm text-pm-danger">{actionError}</p>
+              </div>
+            )}
+            <div className="mt-pm-4 flex flex-wrap gap-pm-3">
+              {pendingRequests.map((req) => (
+                <div key={req.id} className="flex items-center gap-pm-3 rounded-pm-lg border border-pm-border bg-pm-raised p-pm-3">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-pm-text-primary">
+                      {req.user
+                        ? `${req.user.firstName ?? ''} ${req.user.lastName ?? ''}`.trim() || req.user.email
+                        : t('attendance.unassigned')}
+                    </p>
+                    <p className="text-xs text-pm-text-secondary">
+                      {req.companyName}
+                      {req.publicId ? ` · ${req.publicId}` : ''}
+                      {req.user?.email ? ` · ${req.user.email}` : ''}
+                    </p>
+                  </div>
+                  <BrandButton
+                    disabled={actingOn === req.id}
+                    onClick={() => void resolveRequest(req.id, 'approve')}
+                  >
+                    {actingOn === req.id ? '…' : t('admin.approve')}
+                  </BrandButton>
+                  <BrandButton
+                    tone="secondary"
+                    disabled={actingOn === req.id}
+                    onClick={() => setRejecting(req)}
+                  >
+                    {actingOn === req.id ? '…' : t('admin.reject')}
+                  </BrandButton>
+                </div>
+              ))}
+              {pendingRequests.length === 0 && (
+                <p className="text-sm text-pm-text-secondary">{t('admin.noPendingRequests')}</p>
+              )}
+            </div>
+          </GlassPanel>
+        </>
+      )}
+
+      {rejecting && (
+        <ConfirmDialog
+          open
+          title={t('admin.rejectConfirmTitle')}
+          description={`${t('admin.rejectConfirmDescription')} ${rejecting.companyName}`}
+          confirmLabel={t('admin.reject')}
+          cancelLabel={t('admin.cancel')}
+          destructive
+          busy={actingOn === rejecting.id}
+          onConfirm={() => void resolveRequest(rejecting.id, 'reject')}
+          onCancel={() => setRejecting(null)}
+        />
+      )}
     </div>
   );
 }

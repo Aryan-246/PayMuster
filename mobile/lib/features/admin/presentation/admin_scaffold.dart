@@ -75,6 +75,62 @@ const _sidebarItems = <_NavItem>[
     route: '/admin/payroll',
   ),
   _NavItem(
+    icon: Icons.card_membership_outlined,
+    activeIcon: Icons.card_membership,
+    label: 'Subscriptions',
+    branchIndex: 2,
+    route: '/admin/subscriptions',
+  ),
+  _NavItem(
+    icon: Icons.payments_outlined,
+    activeIcon: Icons.payments,
+    label: 'Billing & Payments',
+    branchIndex: 2,
+    route: '/admin/payments',
+  ),
+  _NavItem(
+    icon: Icons.email_outlined,
+    activeIcon: Icons.email,
+    label: 'Mail Supply',
+    branchIndex: 2,
+    route: '/admin/mail',
+  ),
+  _NavItem(
+    icon: Icons.campaign_outlined,
+    activeIcon: Icons.campaign,
+    label: 'Announcements',
+    branchIndex: 2,
+    route: '/admin/announcements',
+  ),
+  _NavItem(
+    icon: Icons.rate_review_outlined,
+    activeIcon: Icons.rate_review,
+    label: 'Reviews',
+    branchIndex: 2,
+    route: '/admin/reviews',
+  ),
+  _NavItem(
+    icon: Icons.badge_outlined,
+    activeIcon: Icons.badge,
+    label: 'Owners',
+    branchIndex: 1,
+    route: '/admin/owners',
+  ),
+  _NavItem(
+    icon: Icons.insights_outlined,
+    activeIcon: Icons.insights,
+    label: 'Reports',
+    branchIndex: 0,
+    route: '/admin/reports',
+  ),
+  _NavItem(
+    icon: Icons.dns_outlined,
+    activeIcon: Icons.dns,
+    label: 'Provider Health',
+    branchIndex: 4,
+    route: '/admin/provider-health',
+  ),
+  _NavItem(
     icon: Icons.security_outlined,
     activeIcon: Icons.security,
     label: 'Audit Logs',
@@ -188,6 +244,21 @@ class AdminScaffold extends ConsumerWidget {
     if (location.startsWith('/admin/sites')) return 'Sites';
     if (location.startsWith('/admin/attendance')) return 'Attendance';
     if (location.startsWith('/admin/payroll')) return 'Payroll';
+    if (location.startsWith('/admin/subscriptions/')) {
+      return 'Subscriber Details';
+    }
+    if (location.startsWith('/admin/subscriptions')) return 'Subscriptions';
+    if (location.startsWith('/admin/payments')) return 'Billing & Payments';
+    if (location.startsWith('/admin/mail/compose')) return 'Compose Email';
+    if (location.startsWith('/admin/mail')) return 'Mail Supply';
+    if (location.startsWith('/admin/announcements')) return 'Announcements';
+    if (location.startsWith('/admin/reviews/')) return 'Review Details';
+    if (location.startsWith('/admin/reviews')) return 'Customer Reviews';
+    if (location.startsWith('/admin/owners')) return 'Owners';
+    if (location.startsWith('/admin/reports')) return 'Reports & Analytics';
+    if (location.startsWith('/admin/provider-health')) {
+      return 'Provider Health';
+    }
     if (location.startsWith('/admin/audit-logs')) return 'Audit Logs';
     if (location.startsWith('/admin/notifications')) return 'Notifications';
     if (location.startsWith('/admin/documents')) return 'Documents';

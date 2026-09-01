@@ -335,6 +335,53 @@ export class AdminService {
     return { sites, total, page, totalPages: Math.ceil(total / limit) };
   }
 
+  /**
+   * Full site snapshot for the admin site-detail screen: identity, org,
+   * address/coordinates/geofence, lifecycle dates, assigned workers, members,
+   * attendance counts and metadata — all read-only, platform-scoped.
+   */
+  async getSiteDetail(siteId: string) {
+    const site = await prisma.site.findFirst({
+      where: { id: siteId, deletedAt: null },
+      include: {
+        org: { select: { id: true, publicId: true, name: true, status: true } },
+        siteAssignments: {
+          where: { deletedAt: null, removedAt: null },
+          select: {
+            id: true,
+            publicId: true,
+            assignedAt: true,
+            staff: { select: { id: true, publicId: true, firstName: true, lastName: true, email: true, phone: true } },
+          },
+          orderBy: { assignedAt: 'desc' },
+          take: 50,
+        },
+        siteMembers: {
+          where: { deletedAt: null, removedAt: null },
+          select: {
+            id: true,
+            role: true,
+            assignedAt: true,
+            user: { select: { id: true, publicId: true, firstName: true, lastName: true, email: true } },
+          },
+          orderBy: { assignedAt: 'desc' },
+          take: 50,
+        },
+        _count: {
+          select: {
+            siteAssignments: { where: { deletedAt: null, removedAt: null } },
+            attendanceRecords: { where: { deletedAt: null } },
+            siteMembers: { where: { deletedAt: null, removedAt: null } },
+          },
+        },
+      },
+    });
+    if (!site) {
+      throw new AppError('SITE_NOT_FOUND', 'Site not found.', 404);
+    }
+    return site;
+  }
+
   async getAttendanceRecords(search?: string, orgId?: string, siteId?: string, status?: string, page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const where: any = { deletedAt: null };

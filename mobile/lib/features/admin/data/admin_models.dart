@@ -59,6 +59,7 @@ class AdminUser {
   final String? lastLoginAt;
   final String? companyName;
   final String? companyPublicId;
+  final String? companyId;
 
   const AdminUser({
     required this.id,
@@ -76,6 +77,7 @@ class AdminUser {
     this.lastLoginAt,
     this.companyName,
     this.companyPublicId,
+    this.companyId,
   });
 
   factory AdminUser.fromJson(Map<String, dynamic> json) {
@@ -108,6 +110,7 @@ class AdminUser {
       lastLoginAt: json['lastLoginAt'] as String?,
       companyName: org?['name'] as String?,
       companyPublicId: org?['publicId'] as String?,
+      companyId: org?['id'] as String?,
     );
   }
 }
@@ -575,6 +578,711 @@ class AnnouncementDispatchResult {
       orgId: json['orgId'] as String?,
       recipientCount: recipientCount.toInt(),
       createdAt: parsedCreatedAt,
+    );
+  }
+}
+
+/// Recipient preview for the single announcement compose workflow. The count
+/// is server-derived from the exact same filter dispatch uses — never an
+/// estimate — so the admin sees precisely who will be notified.
+class AnnouncementPreview {
+  const AnnouncementPreview({
+    required this.audience,
+    this.orgId,
+    required this.recipientCount,
+    required this.sampleRecipients,
+  });
+
+  final String audience;
+  final String? orgId;
+  final int recipientCount;
+  final List<AnnouncementPreviewRecipient> sampleRecipients;
+
+  factory AnnouncementPreview.fromJson(Map<String, dynamic> json) {
+    return AnnouncementPreview(
+      audience: json['audience'] as String? ?? '',
+      orgId: json['orgId'] as String?,
+      recipientCount: (json['recipientCount'] as num?)?.toInt() ?? 0,
+      sampleRecipients: (json['sampleRecipients'] as List<dynamic>? ?? [])
+          .map((r) => AnnouncementPreviewRecipient.fromJson(
+              r as Map<String, dynamic>? ?? const {}))
+          .toList(),
+    );
+  }
+}
+
+class AnnouncementPreviewRecipient {
+  const AnnouncementPreviewRecipient({
+    this.publicId,
+    required this.name,
+    this.email,
+  });
+
+  final String? publicId;
+  final String name;
+  final String? email;
+
+  factory AnnouncementPreviewRecipient.fromJson(Map<String, dynamic> json) {
+    return AnnouncementPreviewRecipient(
+      publicId: json['publicId'] as String?,
+      name: json['name'] as String? ?? 'Unnamed recipient',
+      email: json['email'] as String?,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions administration
+// ---------------------------------------------------------------------------
+
+class AdminSubscriber {
+  const AdminSubscriber({
+    required this.id,
+    required this.orgId,
+    required this.orgName,
+    required this.orgPublicId,
+    this.ownerName,
+    this.ownerPublicId,
+    this.ownerRequestId,
+    required this.planCode,
+    required this.planName,
+    this.planAmountMinor,
+    this.planCurrency,
+    required this.status,
+    required this.provider,
+    this.trialEndsAt,
+    required this.cancelAtPeriodEnd,
+    required this.unlimitedAccess,
+    this.currentPeriodEnd,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String orgId;
+  final String orgName;
+  final String orgPublicId;
+  final String? ownerName;
+  final String? ownerPublicId;
+  final String? ownerRequestId;
+  final String planCode;
+  final String planName;
+  final String? planAmountMinor;
+  final String? planCurrency;
+  final String status;
+  final String provider;
+  final String? trialEndsAt;
+  final bool cancelAtPeriodEnd;
+  final bool unlimitedAccess;
+  final String? currentPeriodEnd;
+  final String? createdAt;
+
+  bool get isTrialActive {
+    final ends = DateTime.tryParse(trialEndsAt ?? '');
+    return ends != null && ends.isAfter(DateTime.now());
+  }
+
+  /// True when the organization actually has a subscription row. Orgs with no
+  /// subscription are listed with status NO_SUBSCRIPTION so the admin can
+  /// still open their detail page and provision/grant access.
+  bool get hasSubscription => id.isNotEmpty && status != 'NO_SUBSCRIPTION';
+
+  bool get isPaid =>
+      status == 'ACTIVE' && !isTrialActive && planAmountMinor != '0';
+
+  factory AdminSubscriber.fromJson(Map<String, dynamic> json) {
+    final org = json['org'] as Map<String, dynamic>? ?? {};
+    final plan = json['plan'] as Map<String, dynamic>? ?? {};
+    final owner = json['owner'] as Map<String, dynamic>?;
+    String? ownerName;
+    if (owner != null) {
+      final joined = [
+        owner['firstName'],
+        owner['lastName'],
+      ].whereType<String>().where((s) => s.isNotEmpty).join(' ').trim();
+      ownerName = joined.isNotEmpty ? joined : owner['email'] as String?;
+    }
+
+    return AdminSubscriber(
+      id: json['id'] as String? ?? '',
+      orgId: json['orgId'] as String? ?? org['id'] as String? ?? '',
+      orgName: org['name'] as String? ?? 'Name unavailable',
+      orgPublicId: org['publicId'] as String? ?? 'Unavailable',
+      ownerName: ownerName,
+      ownerPublicId: owner?['publicId'] as String?,
+      ownerRequestId: json['ownerRequestId'] as String?,
+      planCode: plan['code'] as String? ?? 'NO PLAN',
+      planName: plan['name'] as String? ?? 'No active plan',
+      planAmountMinor: plan['amountMinor']?.toString(),
+      planCurrency: plan['currency'] as String?,
+      status: json['status'] as String? ?? 'TRIALING',
+      provider: json['provider'] as String? ?? 'razorpay',
+      trialEndsAt: json['trialEndsAt'] as String?,
+      cancelAtPeriodEnd: json['cancelAtPeriodEnd'] as bool? ?? false,
+      unlimitedAccess: json['unlimitedAccess'] as bool? ?? false,
+      currentPeriodEnd: json['currentPeriodEnd'] as String?,
+      createdAt: json['createdAt'] as String?,
+    );
+  }
+}
+
+class AdminSubscriptionsSummary {
+  const AdminSubscriptionsSummary({
+    required this.total,
+    required this.activeCount,
+    required this.trialCount,
+    required this.unlimitedCount,
+    required this.paidCount,
+    this.noSubscriptionCount = 0,
+  });
+
+  final int total;
+  final int activeCount;
+  final int trialCount;
+  final int unlimitedCount;
+  final int paidCount;
+  final int noSubscriptionCount;
+
+  factory AdminSubscriptionsSummary.fromJson(Map<String, dynamic> json) {
+    return AdminSubscriptionsSummary(
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      activeCount: (json['activeCount'] as num?)?.toInt() ?? 0,
+      trialCount: (json['trialCount'] as num?)?.toInt() ?? 0,
+      unlimitedCount: (json['unlimitedCount'] as num?)?.toInt() ?? 0,
+      paidCount: (json['paidCount'] as num?)?.toInt() ?? 0,
+      noSubscriptionCount: (json['noSubscriptionCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class AdminSubscriptionDetail {
+  const AdminSubscriptionDetail({
+    required this.subscription,
+    required this.org,
+    required this.owners,
+    this.ownerRequestId,
+    required this.history,
+    required this.mailSentThisMonth,
+    this.mailPeriodEnd,
+    this.noSubscription = false,
+    this.provisionable = false,
+  });
+
+  final Map<String, dynamic> subscription;
+  final Map<String, dynamic>? org;
+  final List<Map<String, dynamic>> owners;
+  final String? ownerRequestId;
+  final List<Map<String, dynamic>> history;
+  final int mailSentThisMonth;
+  final String? mailPeriodEnd;
+
+  /// True when the organization has no subscription record. The detail page is
+  /// still actionable: granting unlimited access provisions a subscription on
+  /// the cheapest active plan first (server-side business rule).
+  final bool noSubscription;
+  final bool provisionable;
+
+  factory AdminSubscriptionDetail.fromJson(Map<String, dynamic> json) {
+    return AdminSubscriptionDetail(
+      subscription: json['subscription'] as Map<String, dynamic>? ?? {},
+      org: json['org'] as Map<String, dynamic>?,
+      owners: (json['owners'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>(),
+      ownerRequestId:
+          (json['ownerRequest'] as Map<String, dynamic>?)?['publicId']
+              as String?,
+      history: (json['history'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>(),
+      mailSentThisMonth:
+          (((json['mailUsage'] as Map<String, dynamic>?)?['sentThisMonth'])
+                  as num?)
+              ?.toInt() ??
+          0,
+      mailPeriodEnd:
+          (json['mailUsage'] as Map<String, dynamic>?)?['periodEnd'] as String?,
+      noSubscription: json['noSubscription'] as bool? ??
+          (json['subscription'] == null),
+      provisionable: json['provisionable'] as bool? ?? false,
+    );
+  }
+}
+
+class AdminPlan {
+  const AdminPlan({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.amountMinor,
+    required this.currency,
+    required this.interval,
+    required this.trialDays,
+  });
+
+  final String id;
+  final String code;
+  final String name;
+  final String amountMinor;
+  final String currency;
+  final String interval;
+  final int trialDays;
+
+  factory AdminPlan.fromJson(Map<String, dynamic> json) {
+    return AdminPlan(
+      id: json['id'] as String? ?? '',
+      code: json['code'] as String? ?? '',
+      name: json['name'] as String? ?? 'Unknown plan',
+      amountMinor: json['amountMinor']?.toString() ?? '0',
+      currency: json['currency'] as String? ?? 'INR',
+      interval: json['interval'] as String? ?? 'MONTH',
+      trialDays: (json['trialDays'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Platform payments
+// ---------------------------------------------------------------------------
+
+class AdminPaymentEvent {
+  const AdminPaymentEvent({
+    required this.id,
+    required this.provider,
+    required this.providerEventId,
+    required this.eventType,
+    required this.status,
+    required this.createdAt,
+    this.failureReason,
+    this.orgName,
+    this.orgPublicId,
+    this.subscriptionStatus,
+    this.planCode,
+  });
+
+  final String id;
+  final String provider;
+  final String providerEventId;
+  final String eventType;
+  final String status;
+  final String createdAt;
+  final String? failureReason;
+  final String? orgName;
+  final String? orgPublicId;
+  final String? subscriptionStatus;
+  final String? planCode;
+
+  factory AdminPaymentEvent.fromJson(Map<String, dynamic> json) {
+    final org = json['org'] as Map<String, dynamic>?;
+    final sub = json['subscription'] as Map<String, dynamic>?;
+
+    return AdminPaymentEvent(
+      id: json['id'] as String? ?? '',
+      provider: json['provider'] as String? ?? 'razorpay',
+      providerEventId: json['providerEventId'] as String? ?? '',
+      eventType: json['eventType'] as String? ?? '',
+      status: json['status'] as String? ?? 'RECEIVED',
+      createdAt: json['createdAt'] as String? ?? '',
+      failureReason: json['failureReason'] as String?,
+      orgName: org?['name'] as String?,
+      orgPublicId: org?['publicId'] as String?,
+      subscriptionStatus: sub?['status'] as String?,
+      planCode: (sub?['plan'] as Map<String, dynamic>?)?['code'] as String?,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Platform mail supply
+// ---------------------------------------------------------------------------
+
+class AdminMailDispatch {
+  const AdminMailDispatch({
+    required this.id,
+    required this.subject,
+    required this.targetType,
+    required this.recipientCount,
+    required this.sent,
+    required this.failed,
+    required this.status,
+    required this.createdAt,
+    this.orgName,
+  });
+
+  final String id;
+  final String subject;
+  final String targetType;
+  final int recipientCount;
+  final int sent;
+  final int failed;
+  final String status;
+  final String createdAt;
+  final String? orgName;
+
+  factory AdminMailDispatch.fromJson(Map<String, dynamic> json) {
+    final sent = (json['sent'] as num?)?.toInt() ?? 0;
+    final failed = (json['failed'] as num?)?.toInt() ?? 0;
+    return AdminMailDispatch(
+      id: json['id'] as String? ?? '',
+      subject: json['subject'] as String? ?? 'Subject unavailable',
+      targetType: json['targetType'] as String? ?? 'ALL',
+      recipientCount: (json['recipientCount'] as num?)?.toInt() ?? 0,
+      sent: sent,
+      failed: failed,
+      status: failed > 0 && sent > 0
+          ? 'PARTIAL'
+          : failed > 0
+              ? 'FAILED'
+              : sent > 0
+                  ? 'SENT'
+                  : (json['status'] as String? ?? 'PENDING'),
+      createdAt: json['createdAt'] as String? ?? '',
+      orgName: (json['org'] as Map<String, dynamic>?)?['name'] as String?,
+    );
+  }
+}
+
+class AdminMailOverview {
+  const AdminMailOverview({
+    required this.totalDispatches,
+    required this.totalSent,
+    required this.totalFailed,
+    required this.mailSentThisMonth,
+    required this.orgsUsingMail,
+    required this.orgCount,
+    required this.userCount,
+    required this.freePlanMonthlyLimit,
+    required this.dispatches,
+  });
+
+  final int totalDispatches;
+  final int totalSent;
+  final int totalFailed;
+  final int mailSentThisMonth;
+  final int orgsUsingMail;
+  final int orgCount;
+  final int userCount;
+  final int freePlanMonthlyLimit;
+  final List<AdminMailDispatch> dispatches;
+
+  factory AdminMailOverview.fromJson(Map<String, dynamic> json) {
+    final summary = json['summary'] as Map<String, dynamic>? ?? {};
+    final quota = json['quota'] as Map<String, dynamic>? ?? {};
+    final dispatches = (json['dispatches'] as List<dynamic>? ?? [])
+        .map((d) => AdminMailDispatch.fromJson(d as Map<String, dynamic>))
+        .toList();
+
+    return AdminMailOverview(
+      totalDispatches: (summary['totalDispatches'] as num?)?.toInt() ?? 0,
+      totalSent: (summary['totalSent'] as num?)?.toInt() ?? 0,
+      totalFailed: (summary['totalFailed'] as num?)?.toInt() ?? 0,
+      mailSentThisMonth: (summary['mailSentThisMonth'] as num?)?.toInt() ?? 0,
+      orgsUsingMail: (summary['orgsUsingMail'] as num?)?.toInt() ?? 0,
+      orgCount: (summary['orgCount'] as num?)?.toInt() ?? 0,
+      userCount: (summary['userCount'] as num?)?.toInt() ?? 0,
+      freePlanMonthlyLimit:
+          (quota['freePlanMonthlyLimit'] as num?)?.toInt() ?? 10,
+      dispatches: dispatches,
+    );
+  }
+}
+
+class AdminMailPreviewResult {
+  const AdminMailPreviewResult({required this.count, required this.quotaRemaining});
+
+  final int count;
+  final int quotaRemaining;
+
+  factory AdminMailPreviewResult.fromJson(Map<String, dynamic> json) {
+    return AdminMailPreviewResult(
+      count: (json['count'] as num?)?.toInt() ?? 0,
+      quotaRemaining: (json['quotaRemaining'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class AdminMailSendResult {
+  const AdminMailSendResult({
+    required this.sent,
+    required this.failed,
+    required this.blocked,
+    required this.dispatchId,
+    this.duplicate,
+    this.errors = const [],
+  });
+
+  final int sent;
+  final int failed;
+  final int blocked;
+  final String dispatchId;
+  final bool? duplicate;
+  final List<Map<String, dynamic>> errors;
+
+  String get outcome {
+    if (duplicate == true) return 'DUPLICATE';
+    if (sent > 0 && failed > 0) return 'PARTIAL';
+    if (sent > 0) return 'SENT';
+    if (failed > 0) return 'FAILED';
+    return 'QUEUED';
+  }
+
+  factory AdminMailSendResult.fromJson(Map<String, dynamic> json) {
+    return AdminMailSendResult(
+      sent: (json['sent'] as num?)?.toInt() ?? 0,
+      failed: (json['failed'] as num?)?.toInt() ?? 0,
+      blocked: (json['blocked'] as num?)?.toInt() ?? 0,
+      dispatchId: json['dispatchId'] as String? ?? '',
+      duplicate: json['duplicate'] as bool?,
+      errors: (json['errors'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>(),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Platform announcements history
+// ---------------------------------------------------------------------------
+
+class AdminAnnouncementCampaign {
+  const AdminAnnouncementCampaign({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.type,
+    required this.audience,
+    required this.recipientCount,
+    required this.createdAt,
+    this.orgName,
+    this.actorName,
+    this.acknowledgementCount,
+  });
+
+  final String id;
+  final String title;
+  final String body;
+  final String type;
+  final String audience;
+  final int recipientCount;
+  final String createdAt;
+  final String? orgName;
+  final String? actorName;
+  final int? acknowledgementCount;
+
+  factory AdminAnnouncementCampaign.fromJson(Map<String, dynamic> json) {
+    final actor = json['actor'] as Map<String, dynamic>?;
+    final actorName = actor == null
+        ? null
+        : [actor['firstName'], actor['lastName']]
+            .whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .join(' ')
+            .trim();
+    final counts = json['_count'] as Map<String, dynamic>?;
+
+    return AdminAnnouncementCampaign(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Title unavailable',
+      body: json['body'] as String? ?? '',
+      type: json['type'] as String? ?? 'INFORMATION',
+      audience: json['audience'] as String? ?? 'ORGANIZATION',
+      recipientCount: (json['recipientCount'] as num?)?.toInt() ?? 0,
+      createdAt: json['createdAt'] as String? ?? '',
+      orgName: (json['org'] as Map<String, dynamic>?)?['name'] as String?,
+      actorName: actorName?.isNotEmpty == true ? actorName : actor?['email'] as String?,
+      acknowledgementCount: (json['acknowledgementCount'] as num?)?.toInt() ??
+          (counts?['notifications'] as num?)?.toInt(),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Customer Reviews
+// ---------------------------------------------------------------------------
+
+class AdminReview {
+  const AdminReview({
+    required this.id,
+    required this.publicId,
+    required this.rating,
+    required this.text,
+    required this.status,
+    required this.createdAt,
+    this.adminResponse,
+    this.moderatedAt,
+    this.userName,
+    this.userPublicId,
+    this.userEmail,
+    this.userRole,
+    this.orgName,
+    this.orgPublicId,
+  });
+
+  final String id;
+  final String publicId;
+  final int rating;
+  final String text;
+  final String status;
+  final String createdAt;
+  final String? adminResponse;
+  final String? moderatedAt;
+  final String? userName;
+  final String? userPublicId;
+  final String? userEmail;
+  final String? userRole;
+  final String? orgName;
+  final String? orgPublicId;
+
+  factory AdminReview.fromJson(Map<String, dynamic> json) {
+    final user = json['user'] as Map<String, dynamic>? ?? {};
+    final org = json['org'] as Map<String, dynamic>? ?? {};
+    final userName = [
+      user['firstName'],
+      user['lastName'],
+    ].whereType<String>().where((s) => s.isNotEmpty).join(' ').trim();
+
+    return AdminReview(
+      id: json['id'] as String? ?? '',
+      publicId: json['publicId'] as String? ?? 'Unavailable',
+      rating: (json['rating'] as num?)?.toInt() ?? 0,
+      text: json['text'] as String? ?? '',
+      status: json['status'] as String? ?? 'PENDING',
+      createdAt: json['createdAt'] as String? ?? '',
+      adminResponse: json['adminResponse'] as String?,
+      moderatedAt: json['moderatedAt'] as String?,
+      userName: userName.isNotEmpty ? userName : user['email'] as String?,
+      userPublicId: user['publicId'] as String?,
+      userEmail: user['email'] as String?,
+      userRole: user['role'] as String?,
+      orgName: org['name'] as String?,
+      orgPublicId: org['publicId'] as String?,
+    );
+  }
+}
+
+class AdminReviewSummary {
+  const AdminReviewSummary({
+    required this.total,
+    required this.average,
+    required this.distribution,
+    required this.pendingCount,
+    required this.publishedCount,
+    required this.hiddenCount,
+    required this.flaggedCount,
+  });
+
+  final int total;
+  final double average;
+  final Map<int, int> distribution;
+  final int pendingCount;
+  final int publishedCount;
+  final int hiddenCount;
+  final int flaggedCount;
+
+  factory AdminReviewSummary.fromJson(Map<String, dynamic> json) {
+    final rawDistribution = json['distribution'] as Map<String, dynamic>? ?? {};
+    final distribution = <int, int>{};
+    rawDistribution.forEach((key, value) {
+      final star = int.tryParse(key);
+      if (star != null && star >= 1 && star <= 5) {
+        distribution[star] = (value as num?)?.toInt() ?? 0;
+      }
+    });
+
+    return AdminReviewSummary(
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      average: (json['average'] as num?)?.toDouble() ?? 0,
+      distribution: distribution,
+      pendingCount: (json['pendingCount'] as num?)?.toInt() ?? 0,
+      publishedCount: (json['publishedCount'] as num?)?.toInt() ?? 0,
+      hiddenCount: (json['hiddenCount'] as num?)?.toInt() ?? 0,
+      flaggedCount: (json['flaggedCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reports / analytics
+// ---------------------------------------------------------------------------
+
+class AdminReportsOverview {
+  const AdminReportsOverview({
+    required this.totals,
+    required this.series,
+    required this.days,
+  });
+
+  final Map<String, int> totals;
+  final Map<String, Map<String, int>> series;
+  final List<String> days;
+
+  factory AdminReportsOverview.fromJson(Map<String, dynamic> json) {
+    final rawTotals = json['totals'] as Map<String, dynamic>? ?? {};
+    final totals = rawTotals.map(
+      (key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0),
+    );
+
+    final rawSeries = json['series'] as Map<String, dynamic>? ?? {};
+    final series = <String, Map<String, int>>{};
+    rawSeries.forEach((metric, rawDays) {
+      final dayMap = <String, int>{};
+      (rawDays as Map<String, dynamic>).forEach((day, count) {
+        dayMap[day] = (count as num?)?.toInt() ?? 0;
+      });
+      series[metric] = dayMap;
+    });
+
+    final dayKeys = <String>{};
+    for (final dayMap in series.values) {
+      dayKeys.addAll(dayMap.keys);
+    }
+    final days = dayKeys.toList()..sort();
+
+    return AdminReportsOverview(
+      totals: totals,
+      series: series,
+      days: days,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Owners
+// ---------------------------------------------------------------------------
+
+class AdminOwner {
+  const AdminOwner({
+    required this.id,
+    required this.publicId,
+    required this.name,
+    required this.email,
+    required this.status,
+    required this.isDisabled,
+    required this.createdAt,
+    this.companyName,
+    this.companyPublicId,
+    this.companyId,
+  });
+
+  final String id;
+  final String publicId;
+  final String name;
+  final String email;
+  final String status;
+  final bool isDisabled;
+  final String createdAt;
+  final String? companyName;
+  final String? companyPublicId;
+  final String? companyId;
+
+  factory AdminOwner.fromJson(AdminUser user) {
+    return AdminOwner(
+      id: user.id,
+      publicId: user.publicId,
+      name: user.name,
+      email: user.email,
+      status: user.status,
+      isDisabled: user.isDisabled,
+      createdAt: user.createdAt ?? '',
+      companyName: user.companyName,
+      companyPublicId: user.companyPublicId,
+      companyId: user.companyId,
     );
   }
 }

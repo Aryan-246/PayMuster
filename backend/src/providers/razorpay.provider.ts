@@ -122,8 +122,13 @@ function parseOrderResponse(payload: unknown, request: PaymentOrderRequest): Pay
     };
 }
 
-function providerIsConfigured(enabled: boolean, keyId: string, keySecret: string, webhookSecret: string): boolean {
-    return enabled && Boolean(keyId && keySecret && webhookSecret);
+// API operations (order/refund/reconcile) require only the API key pair — this
+// matches providerConfigurationSummary(), which reports Razorpay configured on
+// keyId + keySecret. The webhook secret is a separate concern: when absent,
+// webhook verification fails closed (verifyWebhookSignature returns false) and
+// health reports a webhook-only degraded state (blueprint C6).
+function providerIsConfigured(enabled: boolean, keyId: string, keySecret: string, _webhookSecret: string): boolean {
+    return enabled && Boolean(keyId && keySecret);
 }
 
 function assertTestMode(mode: 'test' | 'live'): void {
@@ -363,21 +368,30 @@ export class RazorpayProvider implements PaymentProvider {
     }
 
     async health(): Promise<ProviderHealth> {
-        const configured = Boolean(this.keyId && this.keySecret && this.webhookSecret);
+        const apiConfigured = Boolean(this.keyId && this.keySecret);
+        const webhookConfigured = Boolean(this.webhookSecret);
         const enabled = this.enabled;
         return {
             provider: this.name,
             kind: 'PAYMENT',
-            status: !enabled ? 'DISABLED' : !configured ? 'INVALID_CONFIGURATION' : 'UNAVAILABLE',
-            readiness: !enabled ? 'DISABLED' : !configured ? 'MISSING_CONFIGURATION' : this.mode === 'test' ? 'READY' : 'ENVIRONMENT_BLOCKED',
+            status: !enabled ? 'DISABLED' : !apiConfigured ? 'INVALID_CONFIGURATION' : 'ENABLED',
+            readiness: !enabled
+                ? 'DISABLED'
+                : !apiConfigured
+                    ? 'MISSING_CONFIGURATION'
+                    : this.mode === 'test' ? 'READY' : 'ENVIRONMENT_BLOCKED',
             enabled,
             fallback: 'free-only-access',
             checkedAt: new Date().toISOString(),
             detail: !enabled
                 ? 'Razorpay is disabled; no payment request is sent.'
-                : this.mode === 'test'
-                    ? 'Razorpay test mode is configured; no live billing is enabled.'
-                    : 'Live billing is blocked until production billing policy is approved.',
+                : !apiConfigured
+                    ? 'Razorpay API credentials are incomplete.'
+                    : this.mode !== 'test'
+                        ? 'Live billing is blocked until production billing policy is approved.'
+                        : apiConfigured && !webhookConfigured
+                            ? 'Razorpay test mode API is configured; webhooks are degraded (empty signing value) — verification fails closed until it is set.'
+                            : 'Razorpay test mode is configured; no live billing is enabled.',
         };
     }
 }

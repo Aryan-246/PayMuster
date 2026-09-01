@@ -8,6 +8,7 @@ import {
   restoreStoredSession,
   type AuthSession,
 } from './lib/auth-session';
+import { installSessionRefresh } from './lib/session-refresh';
 import { I18nProvider } from './i18n/I18nProvider';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -18,6 +19,16 @@ function App() {
   const [session, setSession] = useState<AuthSession | null>(() => loadStoredSession());
   const [restoringSession, setRestoringSession] = useState(() => loadStoredSession() !== null);
   const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    // A mid-session 401 (expired access token) triggers one refresh + retry at
+    // the request layer; an unrecoverable session signs the UI out here so the
+    // user returns to the login panel instead of a stranded error page.
+    installSessionRefresh(() => {
+      setSession(null);
+      setRestoringSession(false);
+    });
+  }, []);
 
   useEffect(() => {
     if (!restoringSession) {
@@ -78,7 +89,7 @@ function App() {
             {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
-        <PayMusterDashboard />
+        <PayMusterDashboard session={session} />
       </>
     );
   }

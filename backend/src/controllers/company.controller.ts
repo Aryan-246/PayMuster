@@ -5,6 +5,7 @@ import { promotionService } from '../services/promotion.service.js';
 import { ownerService } from '../services/owner.service.js';
 import { invitationService } from '../services/invitation.service.js';
 import { staffService } from '../services/staff.service.js';
+import { membershipService } from '../services/membership.service.js';
 import { UserRole } from '../../generated/prisma/index.js';
 
 export class CompanyController {
@@ -14,6 +15,17 @@ export class CompanyController {
     const company = await companyService.lookupByCode(code);
     if (!company) return res.status(404).json({ success: false, error: { message: 'Company not found' } });
     res.status(200).json({ success: true, data: { id: company.id, name: company.name }, meta: { requestId: req.id } });
+  }
+
+  // MULTI-COMPANY (blueprint §L): the user's own switchable companies. This is
+  // a read of the actor's own data across companies, so it requires auth but
+  // no tenant scope. With the flag OFF (default) memberships is always empty —
+  // clients render no switching UI off this response.
+  async getMemberships(req: Request, res: Response) {
+    const user = req.context?.user;
+    if (!user) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authenticated actor is required.' } });
+    const companies = await membershipService.listUserCompanies(user.id);
+    res.status(200).json({ success: true, data: companies, meta: { requestId: req.id } });
   }
 
   async getOverview(req: Request, res: Response) {

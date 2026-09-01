@@ -31,6 +31,10 @@ class AdminApiClient {
     return _request('POST', path, body: body);
   }
 
+  Future<Map<String, dynamic>> _delete(String path) {
+    return _request('DELETE', path);
+  }
+
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
@@ -55,6 +59,7 @@ class AdminApiClient {
         headers: headers,
         body: body == null ? null : jsonEncode(body),
       ),
+      'DELETE' => await _client.delete(uri, headers: headers),
       _ => throw ArgumentError.value(
         method,
         'method',
@@ -266,6 +271,13 @@ class AdminApiClient {
     };
   }
 
+  /// Site detail: org, coordinates, assigned workers, site members,
+  /// attendance counts and lifecycle timestamps — GET /admin/sites/:id.
+  Future<Map<String, dynamic>> getSiteDetail(String siteId) async {
+    final res = await _get('/admin/sites/$siteId');
+    return res['data'] as Map<String, dynamic>? ?? const {};
+  }
+
   Future<Map<String, dynamic>> getAttendanceRecords({
     String? search,
     String? orgId,
@@ -400,6 +412,20 @@ class AdminApiClient {
     return data['enabled'] as bool? ?? false;
   }
 
+  /// Server-authoritative recipient preview for the single announcement
+  /// compose workflow: the exact recipient count (same filter as dispatch)
+  /// plus a sample of who would be notified. Read-only.
+  Future<AnnouncementPreview> previewAnnouncement(
+    AnnouncementDispatchRequest request,
+  ) async {
+    final res = await _post('/admin/announcements/preview', request.toJson());
+    final data = res['data'];
+    if (data is! Map<String, dynamic>) {
+      throw Exception('The server returned invalid preview data.');
+    }
+    return AnnouncementPreview.fromJson(data);
+  }
+
   Future<void> setMaintenanceMode(bool enabled) async {
     await _post('/admin/maintenance/${enabled ? 'enable' : 'disable'}');
   }
@@ -443,8 +469,312 @@ class AdminApiClient {
     return res['data'] as Map<String, dynamic>? ?? res;
   }
 
-  Future<Map<String, dynamic>> sendAiPrompt(String prompt) async {
-    final res = await _post('/admin/ai/chat', {'prompt': prompt});
+  Future<Map<String, dynamic>> sendAiPrompt(
+    String prompt, {
+    String? confirmationToken,
+  }) async {
+    final res = await _post('/admin/ai/chat', {
+      'prompt': prompt,
+      if (confirmationToken != null && confirmationToken.isNotEmpty)
+        'confirmationToken': confirmationToken,
+    });
     return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  // --- Subscriptions administration ---------------------------------------
+
+  Future<Map<String, dynamic>> getSubscriptions({
+    String? search,
+    String? status,
+    String? plan,
+    String? trial,
+    String? unlimited,
+    int page = 1,
+  }) async {
+    final params = <String>[];
+    if (search != null && search.isNotEmpty) {
+      params.add('search=${Uri.encodeComponent(search)}');
+    }
+    if (status != null && status.isNotEmpty && status != 'ALL') {
+      params.add('status=${Uri.encodeComponent(status)}');
+    }
+    if (plan != null && plan.isNotEmpty && plan != 'ALL') {
+      params.add('plan=${Uri.encodeComponent(plan)}');
+    }
+    if (trial != null && trial.isNotEmpty && trial != 'ALL') {
+      params.add('trial=${Uri.encodeComponent(trial)}');
+    }
+    if (unlimited != null && unlimited.isNotEmpty && unlimited != 'ALL') {
+      params.add('unlimited=${Uri.encodeComponent(unlimited)}');
+    }
+    params.add('page=$page');
+    params.add('limit=25');
+
+    final queryString = '?${params.join('&')}';
+    final res = await _get('/admin/subscriptions$queryString');
+    final rawList = res['data'] as List<dynamic>? ?? [];
+    final subscribers = rawList
+        .map((s) => AdminSubscriber.fromJson(s as Map<String, dynamic>))
+        .toList();
+    final meta = res['meta'] as Map<String, dynamic>? ?? {};
+    final summary = meta['summary'] as Map<String, dynamic>?;
+
+    return {
+      'subscribers': subscribers,
+      'total': meta['total'] ?? subscribers.length,
+      'page': meta['page'] ?? page,
+      'totalPages': meta['totalPages'] ?? 1,
+      if (summary != null)
+        'summary': AdminSubscriptionsSummary.fromJson(summary),
+    };
+  }
+
+  Future<AdminSubscriptionDetail> getSubscriptionDetail(String orgId) async {
+    final res = await _get('/admin/subscriptions/orgs/$orgId');
+    return AdminSubscriptionDetail.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<List<AdminPlan>> getPlans() async {
+    final res = await _get('/admin/subscriptions/plans');
+    final rawList = res['data'] as List<dynamic>? ?? [];
+    return rawList
+        .map((p) => AdminPlan.fromJson(p as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> grantUnlimited(String orgId) async {
+    final res = await _post('/admin/subscription/orgs/$orgId/unlimited');
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  Future<Map<String, dynamic>> revokeUnlimited(String orgId) async {
+    final res = await _delete('/admin/subscription/orgs/$orgId/unlimited');
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  Future<bool> getSubscriptionSwitch() async {
+    final res = await _get('/admin/subscription/switch');
+    final data = res['data'] as Map<String, dynamic>? ?? const {};
+    return data['enabled'] as bool? ?? true;
+  }
+
+  Future<bool> setSubscriptionSwitch(bool enabled) async {
+    final res = await _post('/admin/subscription/switch', {
+      'enabled': enabled,
+    });
+    final data = res['data'] as Map<String, dynamic>? ?? const {};
+    return data['enabled'] as bool? ?? enabled;
+  }
+
+  Future<int> reconcileSubscriptions() async {
+    final res = await _post('/admin/subscription/reconcile');
+    final data = res['data'] as Map<String, dynamic>? ?? const {};
+    return (data['expiredCount'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<Map<String, dynamic>> grantOffer(
+    String orgId, {
+    required String key,
+    required dynamic value,
+    String? expiresAt,
+    String? note,
+  }) async {
+    final res = await _post('/admin/subscriptions/orgs/$orgId/offers', {
+      'key': key,
+      'value': value,
+      if (expiresAt != null && expiresAt.isNotEmpty) 'expiresAt': expiresAt,
+      if (note != null && note.isNotEmpty) 'note': note,
+    });
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  Future<Map<String, dynamic>> revokeOffer(String orgId, String key) async {
+    final res = await _delete('/admin/subscriptions/orgs/$orgId/offers/$key');
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  // --- Platform payments ---------------------------------------------------
+
+  Future<Map<String, dynamic>> getPayments({
+    String? search,
+    String? status,
+    int page = 1,
+  }) async {
+    final params = <String>[];
+    if (search != null && search.isNotEmpty) {
+      params.add('search=${Uri.encodeComponent(search)}');
+    }
+    if (status != null && status.isNotEmpty && status != 'ALL') {
+      params.add('status=${Uri.encodeComponent(status)}');
+    }
+    params.add('page=$page');
+    params.add('limit=25');
+
+    final res = await _get('/admin/payments?${params.join('&')}');
+    final rawList = res['data'] as List<dynamic>? ?? [];
+    final payments = rawList
+        .map((p) => AdminPaymentEvent.fromJson(p as Map<String, dynamic>))
+        .toList();
+    final meta = res['meta'] as Map<String, dynamic>? ?? {};
+
+    return {
+      'payments': payments,
+      'total': meta['total'] ?? payments.length,
+      'page': meta['page'] ?? page,
+      'totalPages': meta['totalPages'] ?? 1,
+    };
+  }
+
+  Future<Map<String, dynamic>> getPaymentDetail(String id) async {
+    final res = await _get('/admin/payments/$id');
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  // --- Platform mail supply --------------------------------------------------
+
+  Future<AdminMailOverview> getMailOverview() async {
+    final res = await _get('/admin/mail/overview');
+    return AdminMailOverview.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<AdminMailPreviewResult> previewPlatformMail({
+    required String subject,
+    required String body,
+    required String targetType,
+    String? targetRole,
+    String? targetUserId,
+    String? orgId,
+  }) async {
+    final res = await _post('/admin/mail/preview', {
+      'subject': subject,
+      'body': body,
+      'targetType': targetType,
+      if (targetRole != null && targetRole.isNotEmpty) 'targetRole': targetRole,
+      if (targetUserId != null && targetUserId.isNotEmpty)
+        'targetUserId': targetUserId,
+      if (orgId != null && orgId.isNotEmpty) 'orgId': orgId,
+    });
+    return AdminMailPreviewResult.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<AdminMailSendResult> sendPlatformMail({
+    required String subject,
+    required String body,
+    required String targetType,
+    String? targetRole,
+    String? targetUserId,
+    String? orgId,
+  }) async {
+    final res = await _post('/admin/mail/send', {
+      'subject': subject,
+      'body': body,
+      'targetType': targetType,
+      if (targetRole != null && targetRole.isNotEmpty) 'targetRole': targetRole,
+      if (targetUserId != null && targetUserId.isNotEmpty)
+        'targetUserId': targetUserId,
+      if (orgId != null && orgId.isNotEmpty) 'orgId': orgId,
+    });
+    return AdminMailSendResult.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  // --- Platform announcements history -----------------------------------------
+
+  Future<Map<String, dynamic>> getAnnouncementsAdmin({
+    String? search,
+    int page = 1,
+  }) async {
+    final params = <String>['page=$page', 'limit=25'];
+    if (search != null && search.isNotEmpty) {
+      params.add('search=${Uri.encodeComponent(search)}');
+    }
+    final res = await _get('/admin/announcements?${params.join('&')}');
+    final rawList = res['data'] as List<dynamic>? ?? [];
+    final campaigns = rawList
+        .map(
+          (c) => AdminAnnouncementCampaign.fromJson(c as Map<String, dynamic>),
+        )
+        .toList();
+    final meta = res['meta'] as Map<String, dynamic>? ?? {};
+
+    return {
+      'announcements': campaigns,
+      'total': meta['total'] ?? campaigns.length,
+      'page': meta['page'] ?? page,
+      'totalPages': meta['totalPages'] ?? 1,
+    };
+  }
+
+  // --- Customer reviews --------------------------------------------------------
+
+  Future<Map<String, dynamic>> getReviews({
+    String? search,
+    String? status,
+    int page = 1,
+  }) async {
+    final params = <String>['page=$page', 'limit=25'];
+    if (search != null && search.isNotEmpty) {
+      params.add('search=${Uri.encodeComponent(search)}');
+    }
+    if (status != null && status.isNotEmpty && status != 'ALL') {
+      params.add('status=${Uri.encodeComponent(status)}');
+    }
+    final res = await _get('/admin/reviews?${params.join('&')}');
+    final rawList = res['data'] as List<dynamic>? ?? [];
+    final reviews = rawList
+        .map((r) => AdminReview.fromJson(r as Map<String, dynamic>))
+        .toList();
+    final meta = res['meta'] as Map<String, dynamic>? ?? {};
+    final summary = meta['summary'] as Map<String, dynamic>?;
+
+    return {
+      'reviews': reviews,
+      'total': meta['total'] ?? reviews.length,
+      'page': meta['page'] ?? page,
+      'totalPages': meta['totalPages'] ?? 1,
+      if (summary != null) 'summary': AdminReviewSummary.fromJson(summary),
+    };
+  }
+
+  Future<AdminReviewSummary> getReviewSummary() async {
+    final res = await _get('/admin/reviews/summary');
+    return AdminReviewSummary.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<AdminReview> getReviewDetail(String reviewId) async {
+    final res = await _get('/admin/reviews/$reviewId');
+    return AdminReview.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<Map<String, dynamic>> moderateReview(
+    String reviewId, {
+    required String action,
+    String? response,
+  }) async {
+    final res = await _post('/admin/reviews/$reviewId/moderate', {
+      'action': action,
+      if (response != null && response.isNotEmpty) 'response': response,
+    });
+    return res['data'] as Map<String, dynamic>? ?? res;
+  }
+
+  // --- Reports / analytics --------------------------------------------------------
+
+  Future<AdminReportsOverview> getReportsOverview() async {
+    final res = await _get('/admin/reports/overview');
+    return AdminReportsOverview.fromJson(
+      res['data'] as Map<String, dynamic>? ?? const {},
+    );
   }
 }

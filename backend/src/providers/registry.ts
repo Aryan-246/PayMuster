@@ -12,6 +12,7 @@ import { algoliaProvider } from './algolia.provider.js';
 import { brevoProvider } from './brevo.provider.js';
 import { redisProvider } from './redis.provider.js';
 import { sentryProvider } from './sentry.provider.js';
+import { getProviderUse } from './usage-tracker.js';
 
 function now(): string {
     return new Date().toISOString();
@@ -29,7 +30,7 @@ function configuredHealth(
     let readiness: ProviderReadiness = 'DISABLED';
     let detail: string | undefined;
     if (enabled && !supported) {
-        status = 'UNAVAILABLE';
+        status = 'ENVIRONMENT_BLOCKED';
         readiness = 'ENVIRONMENT_BLOCKED';
         detail = 'Provider is intentionally blocked until its environment and operational policy are approved.';
     } else if (enabled && !configured) {
@@ -37,9 +38,12 @@ function configuredHealth(
         readiness = 'MISSING_CONFIGURATION';
         detail = 'Provider is enabled but required server configuration is incomplete.';
     } else if (enabled) {
-        status = 'UNAVAILABLE';
+        // Enabled + configured + not live-verified is a WORKING state, not an
+        // outage. The old "UNAVAILABLE + readiness READY" pairing read as a
+        // contradiction; operations are verified per use.
+        status = 'ENABLED';
         readiness = 'READY';
-        detail = 'Provider is configured but has not been health-verified for this environment.';
+        detail = 'Provider is enabled and configured; live operation is verified per use.';
     }
     return {
         provider,
@@ -83,6 +87,7 @@ class ExistingPayMusterAuth implements AuthProvider {
             provider: this.name,
             kind: 'AUTH',
             status: 'CONNECTED',
+            readiness: 'READY',
             enabled: true,
             checkedAt: now(),
             detail: 'Existing PayMuster JWT/session authentication is authoritative.',
@@ -130,6 +135,78 @@ function firebaseWebConfigHealth(): ProviderHealth {
     };
 }
 
+/**
+ * Gemini health reflects REAL request outcomes: the usage tracker records
+ * every successful model call made by the AI service, so the admin sees
+ * CONNECTED (with the last success time) instead of a contradiction.
+ */
+function geminiHealth(summary: ReturnType<typeof providerConfigurationSummary>[number]): ProviderHealth {
+    if (!summary.enabled || !summary.configured) {
+        return configuredHealth(summary.provider, summary.kind, summary.enabled, summary.configured, summary.fallback);
+    }
+    const use = getProviderUse('gemini');
+    if (use && use.successCount > 0) {
+        return {
+            provider: 'gemini',
+            kind: 'AI',
+            status: 'CONNECTED',
+            readiness: 'READY',
+            enabled: true,
+            fallback: summary.fallback,
+            checkedAt: now(),
+            detail: `Gemini model ${config.geminiModel} completed ${use.successCount} live request(s); last success ${use.lastSuccessAt.toISOString()}.`,
+        };
+    }
+    if (use && use.failureCount > 0 && use.successCount === 0) {
+        return {
+            provider: 'gemini',
+            kind: 'AI',
+            status: 'UNAVAILABLE',
+            readiness: 'READY',
+            enabled: true,
+            fallback: summary.fallback,
+            checkedAt: now(),
+            detail: `Gemini is configured but every live request so far has failed; last error: ${use.lastError ?? 'unknown'}.`,
+        };
+    }
+    return {
+        provider: 'gemini',
+        kind: 'AI',
+        status: 'ENABLED',
+        readiness: 'READY',
+        enabled: true,
+        fallback: summary.fallback,
+        checkedAt: now(),
+        detail: 'Gemini API credentials are configured; live model requests are verified per use.',
+    };
+}
+
+/**
+ * Single Sentry entry. Observability policy and SDK initialization are one
+ * concern for the admin — reporting both an "environment blocked" row and a
+ * "connected" row for the same provider read as a contradiction.
+ */
+function sentryHealth(): ProviderHealth {
+    if (!config.sentryEnabled) {
+        return sentryProvider.health();
+    }
+    const sdk = sentryProvider.health(); // initializes on first call
+    if (sdk.status === 'CONNECTED') {
+        return sdk;
+    }
+    const policy = observability.health();
+    return {
+        provider: 'sentry',
+        kind: 'OBSERVABILITY',
+        status: 'ENVIRONMENT_BLOCKED',
+        readiness: 'ENVIRONMENT_BLOCKED',
+        enabled: true,
+        fallback: 'structured-logger',
+        checkedAt: now(),
+        detail: `${policy.detail} (SDK status: ${sdk.detail ?? 'not initialized'})`,
+    };
+}
+
 export async function providerHealth(): Promise<ProviderHealth[]> {
     const cloudinary = new CloudinaryProvider();
     const localStorage = new LocalStorageProvider();
@@ -144,7 +221,7 @@ export async function providerHealth(): Promise<ProviderHealth[]> {
 
     return [
         // AI
-        summaryHealth(summary('gemini')),
+        geminiHealth(summary('gemini')),
         // Search
         await algoliaProvider.health(),
         // Media/Storage
@@ -167,9 +244,8 @@ export async function providerHealth(): Promise<ProviderHealth[]> {
         // Maps
         summaryHealth(summary('google-maps')),
         await storedCoordinateMapsProvider.health(),
-        // Observability
-        observability.health(),
-        sentryProvider.health(),
+        // Observability — ONE Sentry entry (policy + SDK state merged).
+        sentryHealth(),
         // Cache
         await redisProvider.health(),
         // Infrastructure (blocked)

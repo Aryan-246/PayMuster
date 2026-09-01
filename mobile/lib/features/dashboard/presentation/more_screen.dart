@@ -5,6 +5,37 @@ import '../../../theme/paymuster_tokens.dart';
 import '../../auth/domain/user.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../admin/presentation/admin_more_screen.dart';
+import '../../company/data/membership_api.dart';
+
+/// Dormant company-switch entry (blueprint §L): renders NOTHING unless the
+/// backend reports the multi-company flag as enabled AND the user holds
+/// additional ACTIVE memberships. With the flag OFF (default) this widget is
+/// invisible and single-company behavior is unchanged.
+class _CompanySwitchEntry extends ConsumerWidget {
+  const _CompanySwitchEntry();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return FutureBuilder<UserCompanies>(
+      future: ref.read(membershipApiProvider).listUserCompanies(),
+      builder: (context, snapshot) {
+        final companies = snapshot.data;
+        if (!snapshot.hasError &&
+            companies != null &&
+            companies.multiCompanyEnabled &&
+            companies.memberships.isNotEmpty) {
+          return ListTile(
+            leading: const Icon(Icons.swap_horiz),
+            title: const Text('Switch Company'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/app/company-switch'),
+          );
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
+}
 
 class MoreScreen extends ConsumerWidget {
   const MoreScreen({super.key});
@@ -47,11 +78,11 @@ class MoreScreen extends ConsumerWidget {
                 if (role == UserRole.owner || role == UserRole.superAdmin || role == UserRole.admin)
                   _buildListTile(context, Icons.people, 'Staff', '/app/staff', textColor),
                 if (role == UserRole.owner || role == UserRole.superAdmin)
-                  _buildListTile(context, Icons.admin_panel_settings, 'Permission Center', '/app/permissions', textColor),
-                if (role == UserRole.owner || role == UserRole.superAdmin)
                   _buildListTile(context, Icons.person_add, 'Join Requests', '/app/join-requests', textColor),
                 if (role == UserRole.owner || role == UserRole.superAdmin)
                   _buildListTile(context, Icons.business, 'Company & Join Code', '/app/company-info', textColor),
+                if (role == UserRole.owner || role == UserRole.superAdmin || role == UserRole.admin)
+                  _buildListTile(context, Icons.auto_awesome, 'AI Assistant', '/app/ai-assistant', textColor),
                 if (role == UserRole.owner)
                   _buildListTile(context, Icons.receipt_long, 'Billing', '/app/billing', textColor),
               ],
@@ -68,28 +99,22 @@ class MoreScreen extends ConsumerWidget {
             title: 'Site Operations',
             items: [
               _buildListTile(context, Icons.folder, 'Documents', '/app/documents', textColor),
-              _buildListTile(context, Icons.calendar_month, 'Leaves', '/app/leaves', textColor),
-              _buildListTile(context, Icons.construction, 'Equipment', '/app/equipment', textColor),
               _buildListTile(context, Icons.notifications, 'Notices', '/app/notices', textColor),
             ],
           ),
-          _buildSection(
-            title: 'Insights',
-            items: [
-              _buildListTile(context, Icons.bar_chart, 'Reports', '/app/reports', textColor),
-              _buildListTile(context, Icons.analytics, 'Analytics', '/app/analytics', textColor),
-            ],
-          ),
-          if (role == UserRole.superAdmin)
+          if (user.organizationId != null)
             _buildSection(
-              title: 'Super Admin',
+              title: 'Feedback',
               items: [
-                _buildListTile(context, Icons.security, 'Super Admin Panel', '/app/super-admin', textColor),
+                _buildListTile(
+                    context, Icons.rate_review, 'Rate Your Company', '/app/review', textColor),
               ],
             ),
           _buildSection(
             title: 'Account',
             items: [
+              const _CompanySwitchEntry(),
+              _buildListTile(context, Icons.notifications_outlined, 'Notifications', '/app/notifications', textColor),
               _buildListTile(context, Icons.person, 'Profile', '/app/more/profile', textColor),
               _buildListTile(context, Icons.settings, 'Settings', '/app/more/settings', textColor),
               ListTile(

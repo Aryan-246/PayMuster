@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 
 import { AppError } from '../lib/app-error.js';
 import { adminController } from './admin.controller.js';
-import { subscriptionService, SubscriptionService } from '../services/subscription.service.js';
+import { subscriptionService } from '../services/subscription.service.js';
 
 const orgId = '11111111-1111-4111-8111-111111111111';
 
@@ -39,20 +39,24 @@ const superAdmin = { id: 'sa-1', email: 'sa@paymuster.com', role: 'SUPER_ADMIN',
 const grantDelegate = subscriptionService as unknown as {
     grantUnlimitedAccess: typeof subscriptionService.grantUnlimitedAccess;
     revokeUnlimitedAccess: typeof subscriptionService.revokeUnlimitedAccess;
+    getGlobalSubscriptionSwitch: typeof subscriptionService.getGlobalSubscriptionSwitch;
+    setGlobalSubscriptionSwitch: typeof subscriptionService.setGlobalSubscriptionSwitch;
 };
 const originalGrant = grantDelegate.grantUnlimitedAccess;
 const originalRevoke = grantDelegate.revokeUnlimitedAccess;
-const originalSwitch = SubscriptionService.getGlobalSubscriptionSwitch();
+const originalGetSwitch = grantDelegate.getGlobalSubscriptionSwitch;
+const originalSetSwitch = grantDelegate.setGlobalSubscriptionSwitch;
 
 afterEach(() => {
     grantDelegate.grantUnlimitedAccess = originalGrant;
     grantDelegate.revokeUnlimitedAccess = originalRevoke;
-    // Restore the process-global switch so it cannot leak into other tests.
-    SubscriptionService.setGlobalSubscriptionSwitch(originalSwitch, 'SUPER_ADMIN');
+    // Restore the persisted-switch delegates so a stub cannot leak into other tests.
+    grantDelegate.getGlobalSubscriptionSwitch = originalGetSwitch;
+    grantDelegate.setGlobalSubscriptionSwitch = originalSetSwitch;
 });
 
 test('getSubscriptionSwitch reports the current server-authoritative switch state', async () => {
-    SubscriptionService.setGlobalSubscriptionSwitch(true, 'SUPER_ADMIN');
+    grantDelegate.getGlobalSubscriptionSwitch = (async () => true) as typeof subscriptionService.getGlobalSubscriptionSwitch;
     const { res, captured } = fakeRes();
 
     await adminController.getSubscriptionSwitch(fakeReq({ user: superAdmin }), res);
@@ -66,7 +70,11 @@ test('getSubscriptionSwitch reports the current server-authoritative switch stat
 });
 
 test('setSubscriptionSwitch toggles enforcement OFF and returns the new state', async () => {
-    SubscriptionService.setGlobalSubscriptionSwitch(true, 'SUPER_ADMIN');
+    let received: { enabled: boolean; actorId: string; actorRole: string } | undefined;
+    grantDelegate.setGlobalSubscriptionSwitch = (async (enabled: boolean, actorId: string, actorRole: string) => {
+        received = { enabled, actorId, actorRole };
+        return enabled;
+    }) as typeof subscriptionService.setGlobalSubscriptionSwitch;
     const { res, captured } = fakeRes();
 
     await adminController.setSubscriptionSwitch(
@@ -76,12 +84,16 @@ test('setSubscriptionSwitch toggles enforcement OFF and returns the new state', 
 
     assert.equal(captured.status, 200);
     assert.deepEqual((captured.body as { data: unknown }).data, { enabled: false });
-    // The mutation is real and observable on the service.
-    assert.equal(SubscriptionService.getGlobalSubscriptionSwitch(), false);
+    // The controller forwards the actor identity and role to the persisted switch.
+    assert.deepEqual(received, { enabled: false, actorId: 'sa-1', actorRole: 'SUPER_ADMIN' });
 });
 
 test('setSubscriptionSwitch rejects a non-boolean payload before mutating state', async () => {
-    SubscriptionService.setGlobalSubscriptionSwitch(true, 'SUPER_ADMIN');
+    let serviceCalled = false;
+    grantDelegate.setGlobalSubscriptionSwitch = (async () => {
+        serviceCalled = true;
+        return true;
+    }) as typeof subscriptionService.setGlobalSubscriptionSwitch;
     const { res } = fakeRes();
 
     await assert.rejects(
@@ -91,17 +103,23 @@ test('setSubscriptionSwitch rejects a non-boolean payload before mutating state'
         ),
         (error) => error instanceof AppError && error.code === 'VALIDATION_ERROR' && error.status === 400,
     );
-    // State is untouched by the rejected request.
-    assert.equal(SubscriptionService.getGlobalSubscriptionSwitch(), true);
+    // State is untouched by the rejected request: the service is never invoked.
+    assert.equal(serviceCalled, false);
 });
 
 test('setSubscriptionSwitch answers 401 when no authenticated actor is present', async () => {
+    let serviceCalled = false;
+    grantDelegate.setGlobalSubscriptionSwitch = (async () => {
+        serviceCalled = true;
+        return true;
+    }) as typeof subscriptionService.setGlobalSubscriptionSwitch;
     const { res, captured } = fakeRes();
 
     await adminController.setSubscriptionSwitch(fakeReq({ body: { enabled: false } }), res);
 
     assert.equal(captured.status, 401);
     assert.equal((captured.body as { error: { code: string } }).error.code, 'UNAUTHORIZED');
+    assert.equal(serviceCalled, false);
 });
 
 test('grantUnlimitedAccess delegates to the service with the actor identity and role', async () => {

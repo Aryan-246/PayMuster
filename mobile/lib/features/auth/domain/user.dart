@@ -60,7 +60,8 @@ class User {
       publicId: json['publicId'] as String?,
       email: json['email'] as String,
       role: role,
-      organizationId: json['organizationId'] as String?,
+      organizationId:
+          json['organizationId'] as String? ?? json['orgId'] as String?,
       name: json['name'] as String?,
     );
   }

@@ -1,53 +1,52 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../i18n/I18nProvider';
+import { authenticatedGetJson } from '../../lib/api';
+import type { AuthSession } from '../../lib/auth-session';
 import { GlassPanel } from '../ui/GlassPanel';
+import { LoadingState } from '../ui/LoadingState';
 import { BrandButton } from '../ui/BrandButton';
 import { DataTable } from '../ui/DataTable';
-import { postJson } from '../../lib/api';
 
-interface User {
+// Mirrors adminService.searchUsers' select shape — GET /api/v1/admin/users?q=
+// (manage_system = SUPER_ADMIN-only server-side).
+interface AdminUserRecord {
   id: string;
-  publicId: string;
-  name: string;
-  email: string;
+  publicId: string | null;
+  email: string | null;
+  phone: string | null;
+  firstName: string | null;
+  lastName: string | null;
   role: string;
-  status: 'active' | 'inactive';
+  status: string;
+  isDisabled: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+  org: { id: string; name: string; publicId: string | null; joinCode: string | null } | null;
 }
 
-const mockUsers: User[] = [
-  { id: '1', publicId: 'USR-001', name: 'Aisha Patel', email: 'aisha@example.com', role: 'Owner', status: 'active' },
-  { id: '2', publicId: 'USR-002', name: 'Raj Singh', email: 'raj@example.com', role: 'Worker', status: 'active' },
-  { id: '3', publicId: 'USR-003', name: 'Priya Sharma', email: 'priya@example.com', role: 'Owner', status: 'active' },
-  { id: '4', publicId: 'USR-004', name: 'Karan Mehta', email: 'karan@example.com', role: 'Admin', status: 'inactive' },
-  { id: '5', publicId: 'USR-005', name: 'Sana Ali', email: 'sana@example.com', role: 'Worker', status: 'active' },
-];
+interface AdminUsersEnvelope {
+  success: boolean;
+  data: AdminUserRecord[];
+  meta: { requestId: string; total: number; page: number; totalPages: number };
+}
 
-export function UserSearchPage() {
+export function UserSearchPage({ session }: { session: AuthSession }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
-  const [users, setUsers] = useState<User[]>(mockUsers);
-  const [searching, setSearching] = useState(false);
 
-  const handleSearch = async () => {
-    setSearching(true);
-    try {
-      const results = await postJson<{ users: User[] }>('/users/search', { query });
-      setUsers(results.users);
-    } catch {
-      setUsers(mockUsers);
-    } finally {
-      setSearching(false);
-    }
-  };
+  // Search runs server-side (searchUsers filters email/name/phone/publicId);
+  // an empty query lists the most recent users. Pagination metadata is real.
+  const usersQuery = useQuery({
+    queryKey: ['admin-users', query],
+    queryFn: () => {
+      const search = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
+      return authenticatedGetJson<AdminUsersEnvelope>(`/api/v1/admin/users${search}`, session.accessToken);
+    },
+  });
 
-  const filteredUsers = query
-    ? users.filter(
-        (u) =>
-          u.name.toLowerCase().includes(query.toLowerCase()) ||
-          u.publicId.toLowerCase().includes(query.toLowerCase()) ||
-          u.email.toLowerCase().includes(query.toLowerCase()),
-      )
-    : users;
+  const users = usersQuery.data?.data ?? [];
+  const total = usersQuery.data?.meta.total ?? 0;
 
   return (
     <div className="space-y-pm-4">
@@ -64,35 +63,55 @@ export function UserSearchPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('admin.searchPlaceholder')}
+            aria-label={t('admin.searchPlaceholder')}
             className="flex-1 rounded-pm-md border border-pm-border bg-pm-background px-pm-4 py-pm-3 text-sm text-pm-text-primary outline-none placeholder:text-pm-text-tertiary focus:border-pm-brand/50"
           />
-          <BrandButton onClick={handleSearch}>{searching ? t('admin.searching') : t('admin.search')}</BrandButton>
+          <BrandButton onClick={() => void usersQuery.refetch()}>
+            {usersQuery.isFetching ? t('admin.searching') : t('admin.search')}
+          </BrandButton>
         </div>
       </GlassPanel>
 
-      <GlassPanel>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-pm-text-primary">{t('admin.searchResults')}</p>
-            <p className="text-sm text-pm-text-secondary">{filteredUsers.length} {t('admin.usersFound')}</p>
+      {usersQuery.isPending ? (
+        <LoadingState />
+      ) : usersQuery.isError ? (
+        <GlassPanel>
+          <p className="text-sm font-semibold text-pm-text-primary">{t('admin.searchLoadError')}</p>
+          <div className="mt-pm-4">
+            <BrandButton tone="secondary" onClick={() => void usersQuery.refetch()}>
+              {t('common.retry')}
+            </BrandButton>
           </div>
-        </div>
-        <div className="mt-pm-4">
-          <DataTable
-            rows={filteredUsers.map((u) => ({
-              id: u.id,
-              name: u.name,
-              status: u.status,
-              value: u.publicId,
-            }))}
-          />
-        </div>
-        {filteredUsers.length === 0 && (
-          <div className="mt-pm-4 rounded-pm-xl border border-dashed border-pm-border bg-pm-surface p-pm-8 text-center">
+        </GlassPanel>
+      ) : users.length === 0 ? (
+        <GlassPanel>
+          <div className="rounded-pm-lg border border-dashed border-pm-border bg-pm-raised p-pm-5 text-center">
             <p className="text-sm text-pm-text-secondary">{t('admin.noUsersFound')}</p>
           </div>
-        )}
-      </GlassPanel>
+        </GlassPanel>
+      ) : (
+        <GlassPanel>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-pm-text-primary">{t('admin.searchResults')}</p>
+              <p className="text-sm text-pm-text-secondary">
+                {total} {t('admin.usersFound')}
+              </p>
+            </div>
+          </div>
+          <div className="mt-pm-4">
+            <DataTable
+              rows={users.map((user) => ({
+                id: user.id,
+                name: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email || user.publicId || user.id,
+                status: user.isDisabled ? 'blocked' : user.status.toLowerCase(),
+                statusLabel: user.isDisabled ? 'BLOCKED' : user.status.toLowerCase(),
+                value: `${user.publicId ?? '—'} · ${user.role}${user.org ? ` · ${user.org.name}` : ''}`,
+              }))}
+            />
+          </div>
+        </GlassPanel>
+      )}
     </div>
   );
 }

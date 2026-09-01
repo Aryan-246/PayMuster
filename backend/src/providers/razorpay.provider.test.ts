@@ -120,6 +120,27 @@ test('Razorpay verifies checkout and webhook signatures with constant-time-safe 
     assert.equal(provider.verifyWebhookSignature(webhookBody, 'invalid'), false);
 });
 
+test('Razorpay webhook verification fails closed when the signing secret is absent', () => {
+    // Production blocker proof (blueprint C6): with an empty webhook secret the
+    // API (order/refund/reconcile) still works on keyId+keySecret, but webhook
+    // verification must never accept a signature — no fake success.
+    const provider = new RazorpayProvider({
+        enabled: true,
+        mode: 'test',
+        keyId: 'rzp_test_id',
+        keySecret: 'server-test-secret',
+        webhookSecret: '',
+    });
+    const body = '{"event":"payment.captured"}';
+    const forged = crypto.createHmac('sha256', 'any-attacker-secret').update(body).digest('hex');
+
+    assert.equal(provider.verifyWebhookSignature(body, forged), false);
+    assert.equal(provider.verifyWebhookSignature(body, ''), false);
+    assert.equal(provider.verifyWebhookSignature('', ''), false);
+    // API operations are unaffected by the missing webhook secret.
+    assert.equal(typeof provider.createOrder, 'function');
+});
+
 test('Razorpay live mode is blocked even when credentials are present', async () => {
     const provider = new RazorpayProvider({
         enabled: true,

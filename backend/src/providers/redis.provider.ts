@@ -159,6 +159,49 @@ export class RedisProvider {
         }
     }
 
+    /**
+     * Atomic SET NX EX — the primitive for distributed locks, idempotency claims,
+     * and single-flight operations across instances (blueprint §K/§R). Returns
+     * true only when this caller won the claim.
+     */
+    async setIfAbsent(key: string, value: string, ttlSeconds?: number): Promise<boolean | null> {
+        const client = this.getClient();
+        if (!client) return null;
+
+        try {
+            // Upstash REST client: options carry NX semantics; the response is
+            // "OK" on success and null when the key already exists.
+            const result: unknown = ttlSeconds
+                ? await client.set(key, value, { nx: true, ex: ttlSeconds })
+                : await client.set(key, value, { nx: true });
+            return result === 'OK';
+        } catch (err: any) {
+            logger.error('redis.setnx_failed', err, { key });
+            return null;
+        }
+    }
+
+    /**
+     * Distributed rate-limit window (blueprint §R): INCR + TTL creates a shared
+     * counter across every backend instance. Returns the incremented count, or
+     * null when Redis is unavailable (caller falls back to in-process limiting).
+     */
+    async incrWithTtl(key: string, windowSeconds: number): Promise<number | null> {
+        const client = this.getClient();
+        if (!client) return null;
+
+        try {
+            const count: number = await client.incr(key);
+            if (count === 1) {
+                await client.expire(key, windowSeconds);
+            }
+            return count;
+        } catch (err: any) {
+            logger.error('redis.incr_ttl_failed', err, { key });
+            return null;
+        }
+    }
+
     async ttl(key: string): Promise<number | null> {
         const client = this.getClient();
         if (!client) return null;

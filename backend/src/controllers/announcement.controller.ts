@@ -9,6 +9,44 @@ interface ListAnnouncementsQuery {
 }
 
 export class AnnouncementController {
+    /**
+     * Org-scoped dispatch (blueprint C2/§F): for OWNER/ADMIN holders of the
+     * manage_announcements permission. The org is forced to the authenticated
+     * actor's org inside the service — a client-supplied orgId is ignored, and
+     * cross-org ROLE/USER targets are structurally impossible.
+     */
+    async dispatchOrgScoped(req: Request, res: Response) {
+        const actor = req.context.user!;
+        const orgId = req.context.tenant?.companyId;
+        if (!orgId) {
+            res.status(400).json({ success: false, error: { code: 'TENANT_REQUIRED', message: 'Company context is required.' } });
+            return;
+        }
+
+        const result = await announcementService.dispatch(actor.id, req.body, {
+            requestId: req.id,
+            ipAddress: req.ip,
+            userAgent: req.get('user-agent'),
+        }, { role: actor.role, orgId });
+
+        announcementInvalidationBroker.publish(result.recipientIds, {
+            reason: 'DISPATCHED',
+            occurredAt: result.createdAt.toISOString(),
+        });
+
+        res.status(201).json({
+            success: true,
+            data: {
+                campaignId: result.campaignId,
+                audience: result.audience,
+                orgId: result.orgId,
+                recipientCount: result.recipientCount,
+                createdAt: result.createdAt,
+            },
+            meta: { requestId: req.id },
+        });
+    }
+
     async listMine(req: Request, res: Response) {
         const userId = req.context.user!.id;
         const { page, limit } = res.locals.validatedQuery as ListAnnouncementsQuery;

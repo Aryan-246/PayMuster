@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 
 import { prisma } from '../lib/prisma.js';
+import { featureFlags } from '../lib/feature-flags.js';
 
 export const requireTenant = (options: {
   scope: 'COMPANY' | 'SITE';
@@ -43,9 +44,30 @@ export const requireTenant = (options: {
       companyId = site.orgId;
     }
 
-    const mayTargetCompany =
+    let mayTargetCompany =
       user.orgId === companyId ||
       (options.allowUnaffiliatedCompany === true && user.orgId === null);
+
+    // Multi-company mode (blueprint §L): when the feature flag is ON, an
+    // ACTIVE Membership row additionally grants tenant access to the target
+    // company. With the flag OFF (the default) this branch is never reached
+    // and the single user.orgId check above remains the sole gate.
+    if (
+      !mayTargetCompany &&
+      featureFlags.multiCompanyEnabled &&
+      companyId
+    ) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: user.id,
+          orgId: companyId,
+          status: 'ACTIVE',
+        },
+        select: { id: true },
+      });
+      mayTargetCompany = Boolean(membership);
+    }
+
     if (!mayTargetCompany) {
       res.status(403).json({ success: false, error: { code: 'TENANT_FORBIDDEN', message: 'You do not have access to this company.' } });
       return;

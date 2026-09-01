@@ -1,7 +1,27 @@
+/**
+ * Provider status model (admin provider-health semantics):
+ *  - CONNECTED        live-verified: a real operation succeeded (or an active
+ *                     health probe passed) in this process.
+ *  - ENABLED          enabled and correctly configured, but not yet
+ *                     live-verified — operations are verified per use.
+ *  - DISABLED         intentionally off (free-tier policy or operator choice).
+ *  - INVALID_CONFIGURATION enabled but required credentials/config incomplete.
+ *  - NOT_CONFIGURED   not configured and not enabled (no attempt possible).
+ *  - ENVIRONMENT_BLOCKED   policy/environment blocks this provider in this
+ *                     deployment even though it may be configured.
+ *  - UNAVAILABLE      live check or real use FAILED — genuinely broken.
+ *  - RATE_LIMITED     throttled by the upstream provider.
+ *
+ * The old model reported ENABLED-with-UNVERIFIED-LIVE-USE as
+ * "UNAVAILABLE + readiness READY", which read as a contradiction.
+ */
 export type ProviderHealthStatus =
     | 'CONNECTED'
+    | 'ENABLED'
     | 'DISABLED'
     | 'INVALID_CONFIGURATION'
+    | 'NOT_CONFIGURED'
+    | 'ENVIRONMENT_BLOCKED'
     | 'RATE_LIMITED'
     | 'UNAVAILABLE';
 

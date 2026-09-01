@@ -1,13 +1,25 @@
 import { Request, Response } from 'express';
 import { AppError } from '../lib/app-error.js';
 import { adminService } from '../services/admin.service.js';
+import { adminSubscriptionService } from '../services/admin-subscription.service.js';
+import { adminOpsService } from '../services/admin-ops.service.js';
+import { reviewService } from '../services/review.service.js';
+import { mailSupplyService } from '../services/mail-supply.service.js';
 import { announcementService } from '../services/announcement.service.js';
 import { announcementInvalidationBroker } from '../lib/announcement-invalidation.js';
 import { maintenanceService } from '../lib/maintenance-service.js';
 import { aiService } from '../services/ai.service.js';
 import { providerHealth, redactProviderConfiguration } from '../providers/registry.js';
 import { searchService } from '../providers/search.service.js';
-import { subscriptionService, SubscriptionService } from '../services/subscription.service.js';
+import { subscriptionService } from '../services/subscription.service.js';
+
+function requireActor(req: Request) {
+  const actor = req.context?.user;
+  if (!actor) {
+    throw new AppError('UNAUTHORIZED', 'Authenticated actor is required.', 401);
+  }
+  return actor;
+}
 
 export class AdminController {
   async searchFoundation(req: Request, res: Response) {
@@ -229,6 +241,21 @@ export class AdminController {
     });
   }
 
+  /** Real recipient-count preview for the single announcement compose workflow. */
+  async previewAnnouncement(req: Request, res: Response) {
+    const actor = req.context.user!;
+    const result = await announcementService.preview(req.body, {
+      role: actor.role,
+      orgId: actor.orgId ?? null,
+    });
+    res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  }
+
+  async getSiteDetail(req: Request, res: Response) {
+    const data = await adminService.getSiteDetail(req.params.id as string);
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
   async userAction(req: Request, res: Response) {
     const targetUserId = req.params.id as string;
     const actionBy = req.context.user!.id;
@@ -298,10 +325,12 @@ export class AdminController {
     const result = await aiService.processChat({
       prompt: req.body.prompt,
       actorId: actor.id,
+      role: actor.role,
       orgId: actor.orgId,
       requestId: req.id,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
+      confirmationToken: typeof req.body.confirmationToken === 'string' ? req.body.confirmationToken : undefined,
     });
 
     res.status(200).json({
@@ -360,7 +389,7 @@ export class AdminController {
   // call re-checks the actor role as defense in depth.
 
   async getSubscriptionSwitch(req: Request, res: Response) {
-    const enabled = SubscriptionService.getGlobalSubscriptionSwitch();
+    const enabled = await subscriptionService.getGlobalSubscriptionSwitch();
     res.status(200).json({ success: true, data: { enabled }, meta: { requestId: req.id } });
   }
 
@@ -373,8 +402,23 @@ export class AdminController {
     if (typeof req.body?.enabled !== 'boolean') {
       throw new AppError('VALIDATION_ERROR', 'A boolean "enabled" field is required.', 400);
     }
-    const enabled = SubscriptionService.setGlobalSubscriptionSwitch(req.body.enabled, actor.role);
+    const enabled = await subscriptionService.setGlobalSubscriptionSwitch(req.body.enabled, actor.id, actor.role);
     res.status(200).json({ success: true, data: { enabled }, meta: { requestId: req.id } });
+  }
+
+  /**
+   * Manual trigger for the expiry reconciliation sweep (blueprint §I): transitions
+   * subscriptions whose currentPeriodEnd has passed to EXPIRED. Idempotent —
+   * re-running is a no-op. SUPER_ADMIN only (manage_system gate on the route).
+   */
+  async reconcileSubscriptions(req: Request, res: Response) {
+    const actor = req.context?.user;
+    if (!actor) {
+      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authenticated actor is required.' } });
+      return;
+    }
+    const expiredCount = await subscriptionService.reconcileExpiredSubscriptions(actor.id);
+    res.status(200).json({ success: true, data: { expiredCount }, meta: { requestId: req.id } });
   }
 
   async grantUnlimitedAccess(req: Request, res: Response) {
@@ -403,6 +447,239 @@ export class AdminController {
     res.status(200).json({
       success: true,
       data: { orgId, subscriptionId: subscription.id, unlimitedAccess: subscription.unlimitedAccess },
+      meta: { requestId: req.id },
+    });
+  }
+
+  // --- Subscriptions administration (platform view) -----------------------
+
+  async listSubscriptions(req: Request, res: Response) {
+    const result = await adminSubscriptionService.listSubscribers({
+      status: req.query.status as string | undefined,
+      planCode: req.query.plan as string | undefined,
+      trial: req.query.trial as string | undefined,
+      unlimited: req.query.unlimited as string | undefined,
+      search: req.query.search as string | undefined,
+      page: parseInt(req.query.page as string || '1', 10),
+      limit: parseInt(req.query.limit as string || '25', 10),
+    });
+    res.status(200).json({
+      success: true,
+      data: result.subscribers,
+      meta: {
+        requestId: req.id,
+        total: result.total,
+        page: result.page,
+        totalPages: result.totalPages,
+        summary: result.summary,
+      },
+    });
+  }
+
+  async getSubscriptionDetail(req: Request, res: Response) {
+    const orgId = req.params.orgId as string;
+    const data = await adminSubscriptionService.getSubscriberDetail(orgId);
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
+  async listPlans(req: Request, res: Response) {
+    const plans = await adminSubscriptionService.listPlans();
+    res.status(200).json({ success: true, data: plans, meta: { requestId: req.id } });
+  }
+
+  async grantOffer(req: Request, res: Response) {
+    const actor = requireActor(req);
+    const orgId = req.params.orgId as string;
+    const { key, value, expiresAt, note } = req.body ?? {};
+    const entitlement = await adminSubscriptionService.grantOffer({
+      orgId,
+      adminId: actor.id,
+      key,
+      value,
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      note,
+      requestId: req.id,
+    });
+    res.status(201).json({ success: true, data: entitlement, meta: { requestId: req.id } });
+  }
+
+  async revokeOffer(req: Request, res: Response) {
+    const actor = requireActor(req);
+    const orgId = req.params.orgId as string;
+    const key = req.params.key as string;
+    const result = await adminSubscriptionService.revokeOffer({
+      orgId,
+      key,
+      adminId: actor.id,
+      requestId: req.id,
+    });
+    res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  }
+
+  // --- Platform payments ----------------------------------------------------
+
+  async listPayments(req: Request, res: Response) {
+    const result = await adminOpsService.listPayments({
+      status: req.query.status as string | undefined,
+      provider: req.query.provider as string | undefined,
+      search: req.query.search as string | undefined,
+      page: parseInt(req.query.page as string || '1', 10),
+      limit: parseInt(req.query.limit as string || '25', 10),
+    });
+    res.status(200).json({
+      success: true,
+      data: result.payments,
+      meta: {
+        requestId: req.id,
+        total: result.total,
+        page: result.page,
+        totalPages: result.totalPages,
+        summary: result.summary,
+      },
+    });
+  }
+
+  async getPaymentDetail(req: Request, res: Response) {
+    const data = await adminOpsService.getPaymentDetail(req.params.id as string);
+    if (!data) throw new AppError('NOT_FOUND', 'Payment event not found', 404);
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
+  // --- Platform mail supply ---------------------------------------------------
+
+  async getMailOverview(req: Request, res: Response) {
+    const data = await adminOpsService.getMailOverview();
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
+  async previewPlatformMail(req: Request, res: Response) {
+    const actor = requireActor(req);
+    const { subject, body, targetType, targetRole, targetUserId, orgId } = req.body ?? {};
+    if (!subject || !body || !targetType) {
+      throw new AppError('VALIDATION_ERROR', 'subject, body, and targetType are required.', 400);
+    }
+    const result = await mailSupplyService.preview({
+      actorId: actor.id,
+      actorRole: actor.role,
+      orgId: orgId ?? undefined,
+      subject,
+      body,
+      targetType,
+      targetRole,
+      targetUserId,
+    });
+    res.status(200).json({
+      success: true,
+      data: { count: result.count, quotaRemaining: result.quotaRemaining },
+      meta: { requestId: req.id },
+    });
+  }
+
+  async sendPlatformMail(req: Request, res: Response) {
+    const actor = requireActor(req);
+    const { subject, body, targetType, targetRole, targetUserId, orgId } = req.body ?? {};
+    if (!subject || !body || !targetType) {
+      throw new AppError('VALIDATION_ERROR', 'subject, body, and targetType are required.', 400);
+    }
+    const result = await mailSupplyService.send({
+      actorId: actor.id,
+      actorRole: actor.role,
+      orgId: orgId ?? undefined,
+      subject,
+      body,
+      targetType,
+      targetRole,
+      targetUserId,
+      requestId: req.id,
+      idempotencyKey: typeof req.headers['idempotency-key'] === 'string'
+        ? req.headers['idempotency-key']
+        : undefined,
+    });
+    res.status(200).json({ success: true, data: result, meta: { requestId: req.id } });
+  }
+
+  // --- Platform announcements -------------------------------------------------
+
+  async listAnnouncementsAdmin(req: Request, res: Response) {
+    const result = await adminOpsService.listAnnouncements({
+      search: req.query.search as string | undefined,
+      page: parseInt(req.query.page as string || '1', 10),
+      limit: parseInt(req.query.limit as string || '25', 10),
+    });
+    res.status(200).json({
+      success: true,
+      data: result.announcements,
+      meta: {
+        requestId: req.id,
+        total: result.total,
+        page: result.page,
+        totalPages: result.totalPages,
+      },
+    });
+  }
+
+  // --- Reports / analytics ------------------------------------------------------
+
+  async getReportsOverview(req: Request, res: Response) {
+    const data = await adminOpsService.getReportsOverview();
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
+  // --- Customer Reviews administration --------------------------------------
+
+  async listReviews(req: Request, res: Response) {
+    const result = await reviewService.listForAdmin({
+      status: req.query.status as string | undefined,
+      search: req.query.search as string | undefined,
+      orgId: req.query.orgId as string | undefined,
+      page: parseInt(req.query.page as string || '1', 10),
+      limit: parseInt(req.query.limit as string || '25', 10),
+    });
+    res.status(200).json({
+      success: true,
+      data: result.reviews,
+      meta: {
+        requestId: req.id,
+        total: result.total,
+        page: result.page,
+        totalPages: result.totalPages,
+        summary: result.summary,
+      },
+    });
+  }
+
+  async getReviewSummary(req: Request, res: Response) {
+    const summary = await reviewService.getRatingSummary();
+    res.status(200).json({ success: true, data: summary, meta: { requestId: req.id } });
+  }
+
+  async getReviewDetail(req: Request, res: Response) {
+    const data = await reviewService.getDetail(req.params.id as string);
+    res.status(200).json({ success: true, data, meta: { requestId: req.id } });
+  }
+
+  async moderateReview(req: Request, res: Response) {
+    const actor = requireActor(req);
+    const reviewId = req.params.id as string;
+    const { action, response } = req.body ?? {};
+    const review = await reviewService.moderate({
+      reviewId,
+      adminId: actor.id,
+      action,
+      response,
+      requestId: req.id,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+    res.status(200).json({
+      success: true,
+      data: {
+        id: review.id,
+        publicId: review.publicId,
+        status: review.status,
+        adminResponse: review.adminResponse,
+        moderatedAt: review.moderatedAt,
+      },
       meta: { requestId: req.id },
     });
   }

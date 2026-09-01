@@ -2,6 +2,7 @@ import { GoogleAuth } from 'google-auth-library';
 
 import { config } from '../lib/config.js';
 import type { ProviderHealth, PushMessage, PushProvider } from './contracts.js';
+import { getProviderUse, recordProviderFailure, recordProviderSuccess } from './usage-tracker.js';
 
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 const MAX_RETRY_ATTEMPTS = 3;
@@ -104,6 +105,7 @@ export class FirebaseFcmProvider implements PushProvider {
         try {
             accessToken = await this.getAccessToken();
         } catch {
+            recordProviderFailure(this.name, 'FCM access token could not be acquired.');
             return 'UNAVAILABLE';
         }
 
@@ -130,35 +132,95 @@ export class FirebaseFcmProvider implements PushProvider {
                     signal: controller.signal,
                 });
                 const payload = await response.json().catch(() => null);
-                if (response.ok) return 'SENT';
-                if (isInvalidTokenResponse(response.status, payload)) return 'INVALID_TOKEN';
-                if (!isRetryableStatus(response.status) || attempt === MAX_RETRY_ATTEMPTS) return 'UNAVAILABLE';
+                if (response.ok) {
+                    recordProviderSuccess(this.name);
+                    return 'SENT';
+                }
+                if (isInvalidTokenResponse(response.status, payload)) {
+                    // A rejected token is a recipient problem, not a provider outage.
+                    recordProviderSuccess(this.name);
+                    return 'INVALID_TOKEN';
+                }
+                if (!isRetryableStatus(response.status) || attempt === MAX_RETRY_ATTEMPTS) {
+                    recordProviderFailure(this.name, `FCM responded ${response.status}.`);
+                    return 'UNAVAILABLE';
+                }
             } catch {
-                if (attempt === MAX_RETRY_ATTEMPTS) return 'UNAVAILABLE';
+                if (attempt === MAX_RETRY_ATTEMPTS) {
+                    recordProviderFailure(this.name, 'FCM request failed after retries.');
+                    return 'UNAVAILABLE';
+                }
             } finally {
                 clearTimeout(timeout);
             }
             await this.sleep(INITIAL_RETRY_DELAY_MS * 2 ** (attempt - 1));
         }
 
+        recordProviderFailure(this.name, 'FCM send exhausted retries.');
         return 'UNAVAILABLE';
     }
 
     async health(): Promise<ProviderHealth> {
         const configured = this.isConfigured();
+        if (!this.enabled) {
+            return {
+                provider: this.name,
+                kind: 'PUSH',
+                status: 'DISABLED',
+                readiness: 'DISABLED',
+                enabled: false,
+                fallback: 'in-app-notification',
+                checkedAt: new Date().toISOString(),
+                detail: 'FCM delivery is disabled; durable in-app notifications remain active.',
+            };
+        }
+        if (!configured) {
+            return {
+                provider: this.name,
+                kind: 'PUSH',
+                status: 'INVALID_CONFIGURATION',
+                readiness: 'MISSING_CONFIGURATION',
+                enabled: true,
+                fallback: 'in-app-notification',
+                checkedAt: new Date().toISOString(),
+                detail: 'FCM is enabled but FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, or FIREBASE_PRIVATE_KEY is missing.',
+            };
+        }
+        // Delivery health is verified on send — report what actually happened.
+        const use = getProviderUse(this.name);
+        if (use && use.successCount > 0) {
+            return {
+                provider: this.name,
+                kind: 'PUSH',
+                status: 'CONNECTED',
+                readiness: 'READY',
+                enabled: true,
+                fallback: 'in-app-notification',
+                checkedAt: new Date().toISOString(),
+                detail: `FCM has delivered ${use.successCount} push notification(s); last success ${use.lastSuccessAt.toISOString()}.`,
+            };
+        }
+        if (use && use.failureCount > 0 && use.successCount === 0) {
+            return {
+                provider: this.name,
+                kind: 'PUSH',
+                status: 'UNAVAILABLE',
+                readiness: 'READY',
+                enabled: true,
+                fallback: 'in-app-notification',
+                checkedAt: new Date().toISOString(),
+                detail: `FCM is configured but every delivery attempt so far has failed; last error: ${use.lastError ?? 'unknown'}.`,
+            };
+        }
         return {
             provider: this.name,
             kind: 'PUSH',
-            status: !this.enabled ? 'DISABLED' : configured ? 'UNAVAILABLE' : 'INVALID_CONFIGURATION',
-            readiness: !this.enabled ? 'DISABLED' : configured ? 'READY' : 'MISSING_CONFIGURATION',
-            enabled: this.enabled,
+            status: 'ENABLED',
+            readiness: 'READY',
+            enabled: true,
             fallback: 'in-app-notification',
             checkedAt: new Date().toISOString(),
-            detail: !this.enabled
-                ? 'FCM delivery is disabled; durable in-app notifications remain active.'
-                : configured
-                    ? 'FCM credentials are configured; delivery health is verified on send.'
-                    : 'FCM is enabled but FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, or FIREBASE_PRIVATE_KEY is missing.',
+            detail: 'FCM credentials are configured; delivery health is verified on send.',
         };
     }
 }

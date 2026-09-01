@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../../theme/paymuster_tokens.dart';
 import '../../../components/layout/pm_card.dart';
 import '../domain/worker.dart';
 import '../data/worker_repository.dart';
 
+/// Worker profile backed by GET /api/v1/staff/:id. Every value rendered is
+/// server data — no fabricated attendance stats, wages, or streaks (the roster
+/// API intentionally excludes financial PII).
 class WorkerProfileScreen extends ConsumerWidget {
   final String workerId;
 
@@ -13,10 +17,10 @@ class WorkerProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // For now we'll just watch the list and find the worker, or use a specific provider.
-    final workersAsync = ref.watch(workersListProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    final workerAsync = ref.watch(workerDetailProvider(workerId));
 
     return Scaffold(
       backgroundColor: isDark ? PMColors.bgPrimaryDark : PMColors.bgPrimaryLight,
@@ -38,52 +42,65 @@ class WorkerProfileScreen extends ConsumerWidget {
         ),
         centerTitle: true,
       ),
-      body: workersAsync.when(
-        data: (workers) {
-          final worker = workers.firstWhere(
-            (w) => w.id == workerId,
-            orElse: () => const Worker(
-              id: '',
-              firstName: 'Unknown',
-              lastName: 'Worker',
-              role: '',
-              employeeId: '',
-              siteId: '',
-              siteName: '',
-              dailyWage: 0,
-              status: '',
-            ),
-          );
-          
-          if (worker.id.isEmpty) {
-            return const Center(child: Text('Worker not found'));
-          }
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildProfileHeader(worker, isDark),
-                const SizedBox(height: PMSpacing.s4),
-                _buildStatsRow(isDark),
-                const SizedBox(height: PMSpacing.s4),
-                _buildFinancialsRow(isDark),
-                const SizedBox(height: PMSpacing.s6),
-                _buildStreakCard(isDark),
-                const SizedBox(height: PMSpacing.s6),
-                _buildTabs(isDark),
-              ],
-            ),
-          );
-        },
+      body: workerAsync.when(
+        data: (worker) => _buildProfile(context, ref, worker, isDark),
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, s) => Center(child: Text('Error: $e')),
+        error: (error, _) => _buildError(context, ref, isDark, error),
+      ),
+    );
+  }
+
+  Widget _buildProfile(BuildContext context, WidgetRef ref, Worker worker, bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: PMSpacing.s5, vertical: PMSpacing.s2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildProfileHeader(worker, isDark),
+          const SizedBox(height: PMSpacing.s4),
+          _buildDetailsCard(worker, isDark),
+          const SizedBox(height: PMSpacing.s6),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(BuildContext context, WidgetRef ref, bool isDark, Object error) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(PMSpacing.s6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 48,
+              color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+            ),
+            const SizedBox(height: PMSpacing.s4),
+            Text('Worker profile unavailable', style: PMTypography.headline),
+            const SizedBox(height: PMSpacing.s2),
+            Text(
+              error.toString(),
+              style: PMTypography.body.copyWith(
+                color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: PMSpacing.s4),
+            TextButton.icon(
+              onPressed: () => ref.invalidate(workerDetailProvider(workerId)),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildProfileHeader(Worker worker, bool isDark) {
+    final isActive = worker.status == 'ACTIVE';
     return PMCard.standard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -97,7 +114,7 @@ class WorkerProfileScreen extends ConsumerWidget {
             ),
             child: Center(
               child: Text(
-                worker.firstName.substring(0, 1) + worker.lastName.substring(0, 1),
+                worker.initials,
                 style: PMTypography.display.copyWith(
                   color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
                 ),
@@ -112,11 +129,17 @@ class WorkerProfileScreen extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(worker.fullName, style: PMTypography.title),
+                    Expanded(
+                      child: Text(
+                        worker.displayName,
+                        style: PMTypography.title,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: worker.status == 'Active'
+                        color: isActive
                             ? (isDark ? PMColors.statusSuccessContainerDark : PMColors.statusSuccessContainerLight)
                             : (isDark ? PMColors.bgSunkenDark : PMColors.bgSunkenLight),
                         borderRadius: PMRadius.sm,
@@ -124,7 +147,7 @@ class WorkerProfileScreen extends ConsumerWidget {
                       child: Text(
                         worker.status,
                         style: PMTypography.caption.copyWith(
-                          color: worker.status == 'Active'
+                          color: isActive
                               ? (isDark ? PMColors.statusSuccessDark : PMColors.statusSuccessLight)
                               : (isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight),
                           fontWeight: FontWeight.w600,
@@ -135,24 +158,20 @@ class WorkerProfileScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: PMSpacing.s1),
                 Text(
-                  worker.role,
+                  worker.workerType,
                   style: PMTypography.body.copyWith(
                     color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
                   ),
                 ),
                 const SizedBox(height: PMSpacing.s2),
-                Text(
-                  'ID: ${worker.employeeId}',
-                  style: PMTypography.caption.copyWith(
-                    color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+                // Public ID — never the internal UUID — is what users see.
+                if (worker.publicId != null)
+                  Text(
+                    'ID: ${worker.publicId}',
+                    style: PMTypography.caption.copyWith(
+                      color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+                    ),
                   ),
-                ),
-                Text(
-                  'Site: ${worker.siteName}',
-                  style: PMTypography.caption.copyWith(
-                    color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
-                  ),
-                ),
               ],
             ),
           ),
@@ -161,140 +180,53 @@ class WorkerProfileScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatsRow(bool isDark) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        _buildStatItem('Present', '24', PMColors.statusSuccessDark, isDark),
-        _buildStatItem('Absent', '1', PMColors.statusDangerDark, isDark),
-        _buildStatItem('Half Day', '2', PMColors.statusWarningDark, isDark),
-        _buildStatItem('OT Days', '4', isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight, isDark),
-      ],
-    );
-  }
-
-  Widget _buildStatItem(String label, String value, Color color, bool isDark) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: PMTypography.title.copyWith(color: color),
-        ),
-        const SizedBox(height: PMSpacing.s1),
-        Text(
-          label,
-          style: PMTypography.caption.copyWith(
-            color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFinancialsRow(bool isDark) {
-    return PMCard.standard(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildFinItem('Monthly Wage', '₹24,500', isDark),
-          _buildFinItem('Advances', '₹3,200', isDark),
-          _buildFinItem('Total Earnings', '₹27,700', isDark, isHighlight: true),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFinItem(String label, String value, bool isDark, {bool isHighlight = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: PMTypography.caption.copyWith(
-            color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
-          ),
-        ),
-        const SizedBox(height: PMSpacing.s1),
-        Text(
-          value,
-          style: PMTypography.headline.copyWith(
-            color: isHighlight
-                ? (isDark ? PMColors.brandPrimaryDark : PMColors.brandPrimaryLight)
-                : (isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStreakCard(bool isDark) {
+  Widget _buildDetailsCard(Worker worker, bool isDark) {
+    final joinDate = worker.joinDate;
     return PMCard.standard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Attendance Streak', style: PMTypography.headline),
-              Text('18 Days', style: PMTypography.label.copyWith(color: PMColors.statusSuccessDark)),
-            ],
-          ),
+          Text('Details', style: PMTypography.headline),
           const SizedBox(height: PMSpacing.s4),
-          // Stub for graph
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: List.generate(15, (index) {
-              final isAbsent = index == 4 || index == 9;
-              final height = isAbsent ? 10.0 : 40.0;
-              return Container(
-                width: 12,
-                height: height,
-                decoration: BoxDecoration(
-                  color: isAbsent ? PMColors.statusDangerDark : PMColors.statusSuccessDark,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              );
-            }),
-          ),
+          if (worker.phone != null) _buildDetailRow('Phone', worker.phone!, isDark),
+          if (worker.email != null) _buildDetailRow('Email', worker.email!, isDark),
+          if (joinDate != null)
+            _buildDetailRow(
+              'Joined',
+              '${joinDate.year}-${joinDate.month.toString().padLeft(2, '0')}-${joinDate.day.toString().padLeft(2, '0')}',
+              isDark,
+            ),
+          _buildDetailRow('Documents on file', worker.documentCount.toString(), isDark),
+          _buildDetailRow('Site assignments', worker.siteAssignmentCount.toString(), isDark),
         ],
       ),
     );
   }
 
-  Widget _buildTabs(bool isDark) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: [
-        _buildTab('Timeline', true, isDark),
-        _buildTab('Documents', false, isDark),
-        _buildTab('Skills', false, isDark),
-        _buildTab('Notes', false, isDark),
-      ],
-    );
-  }
-
-  Widget _buildTab(String label, bool isActive, bool isDark) {
-    return Column(
-      children: [
-        Text(
-          label,
-          style: PMTypography.label.copyWith(
-            color: isActive
-                ? (isDark ? PMColors.brandPrimaryDark : PMColors.brandPrimaryLight)
-                : (isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight),
+  Widget _buildDetailRow(String label, String value, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: PMSpacing.s2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: PMTypography.body.copyWith(
+              color: isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight,
+            ),
           ),
-        ),
-        const SizedBox(height: PMSpacing.s1),
-        if (isActive)
-          Container(
-            height: 2,
-            width: 24,
-            color: isDark ? PMColors.brandPrimaryDark : PMColors.brandPrimaryLight,
-          )
-        else
-          const SizedBox(height: 2),
-      ],
+          Flexible(
+            child: Text(
+              value,
+              style: PMTypography.body.copyWith(
+                color: isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight,
+              ),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

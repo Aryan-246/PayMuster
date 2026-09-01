@@ -16,14 +16,14 @@ router.use(requireAuth);
 router.get(
     '/summary',
     requireTenant({ scope: 'COMPANY' }),
-    requirePermission('manage_settings'),
+    requirePermission('manage_billing'),
     billingController.getSummary.bind(billingController),
 );
 
 router.post(
     '/checkout/order',
     requireTenant({ scope: 'COMPANY' }),
-    requirePermission('manage_settings'),
+    requirePermission('manage_billing'),
     auditMiddleware,
     billingController.createCheckoutOrder.bind(billingController),
 );
@@ -31,7 +31,7 @@ router.post(
 router.post(
     '/checkout/verify',
     requireTenant({ scope: 'COMPANY' }),
-    requirePermission('manage_settings'),
+    requirePermission('manage_billing'),
     validateRequest(verifyCheckoutSchema),
     auditMiddleware,
     billingController.verifyCheckout.bind(billingController),

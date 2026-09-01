@@ -283,6 +283,34 @@ function renderTemplate(template, data) {
                 data,
                 ignoreText: 'If this was not you, contact support immediately to secure your account.',
             });
+        case 'account-deletion':
+            return renderLayout({
+                title: '⚠️ Permanent Account Deletion Verification',
+                preview: 'WARNING: Someone requested permanent deletion of your PayMuster account.',
+                body: '<p style="margin:0;"><strong>WARNING</strong></p>' +
+                    '<p style="margin:14px 0 0;">Someone requested permanent deletion of your PayMuster account.</p>' +
+                    '<p style="margin:14px 0 0;">After deletion:</p>' +
+                    '<ul style="margin:14px 0 0; padding-left:20px;">' +
+                    '<li>Account cannot be recovered</li>' +
+                    '<li>Sessions will be revoked</li>' +
+                    '<li>Company ownership may be removed</li>' +
+                    '<li>This action is irreversible</li>' +
+                    '</ul>' +
+                    '<p style="margin:14px 0 0;">OTP<br><strong style="font-size:24px;">' + (data.otp || '') + '</strong></p>' +
+                    '<p style="margin:14px 0 0;">Expires in 5 minutes.</p>',
+                textBody: 'WARNING\n\n' +
+                    'Someone requested permanent deletion of your PayMuster account.\n\n' +
+                    'After deletion:\n' +
+                    '• Account cannot be recovered\n' +
+                    '• Sessions will be revoked\n' +
+                    '• Company ownership may be removed\n' +
+                    '• This action is irreversible\n\n' +
+                    'OTP\n' +
+                    (data.otp || '') + '\n\n' +
+                    'Expires in 5 minutes.',
+                data,
+                ignoreText: 'If this wasn\'t you, ignore this email.',
+            });
     }
 }
 function sleep(ms) {
@@ -307,9 +335,16 @@ function parseBrowserName(userAgent) {
 }
 export class EmailService {
     transporter;
-    constructor() {
-        this.transporter =
-            config.emailUser && config.emailAppPassword
+    enabled;
+    emailFrom;
+    sleep;
+    constructor(options = {}) {
+        this.enabled = options.enabled ?? config.smtpEnabled;
+        this.emailFrom = options.emailFrom ?? config.emailFrom;
+        this.sleep = options.sleep ?? sleep;
+        this.transporter = options.transporter !== undefined
+            ? options.transporter
+            : this.enabled && config.emailUser && config.emailAppPassword
                 ? nodemailer.createTransport({
                     host: config.smtpHost,
                     port: config.smtpPort,
@@ -329,10 +364,77 @@ export class EmailService {
                 : null;
     }
     get isConfigured() {
-        return this.transporter !== null && Boolean(config.emailFrom);
+        return this.transporter !== null && Boolean(this.emailFrom);
+    }
+    async health() {
+        const configured = this.isConfigured;
+        return {
+            provider: 'smtp',
+            kind: 'EMAIL',
+            status: this.enabled && configured ? 'UNAVAILABLE' : 'DISABLED',
+            readiness: !this.enabled
+                ? 'DISABLED'
+                : configured
+                    ? 'READY'
+                    : 'MISSING_CONFIGURATION',
+            enabled: config.smtpEnabled,
+            fallback: 'in-app-notification',
+            checkedAt: new Date().toISOString(),
+            detail: this.enabled && configured
+                ? 'SMTP is configured; message delivery is verified per send attempt.'
+                : 'Email delivery is optional and remains non-transaction-critical.',
+        };
+    }
+    async send(message) {
+        if (!this.enabled || !this.transporter || !this.emailFrom) {
+            logger.warn('email.provider_skipped', {
+                eventId: message.eventId,
+                recipient: maskEmail(message.to),
+                reason: 'SMTP_NOT_CONFIGURED',
+            });
+            return 'SKIPPED';
+        }
+        let lastError = null;
+        for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                const result = await this.transporter.sendMail({
+                    from: this.emailFrom,
+                    to: message.to,
+                    subject: message.subject,
+                    html: message.html,
+                    text: message.text,
+                    headers: { 'X-PayMuster-Event-Id': message.eventId },
+                });
+                logger.info('email.provider_sent', {
+                    eventId: message.eventId,
+                    recipient: maskEmail(message.to),
+                    messageId: result.messageId,
+                    attempt,
+                });
+                return 'SENT';
+            }
+            catch (error) {
+                lastError = error;
+                logger.error('email.provider_send_attempt_failed', error, {
+                    eventId: message.eventId,
+                    recipient: maskEmail(message.to),
+                    attempt,
+                    maxAttempts: MAX_RETRY_ATTEMPTS,
+                });
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    await this.sleep(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1));
+                }
+            }
+        }
+        logger.error('email.provider_unavailable', lastError, {
+            eventId: message.eventId,
+            recipient: maskEmail(message.to),
+            totalAttempts: MAX_RETRY_ATTEMPTS,
+        });
+        return 'UNAVAILABLE';
     }
     async verifyConnection() {
-        if (!this.transporter) {
+        if (!this.enabled || !this.transporter) {
             logger.warn('email.smtp_not_configured');
             return false;
         }
@@ -354,31 +456,34 @@ export class EmailService {
         }
     }
     async sendVerificationEmail(to, data) {
-        await this.send('verification', to, 'Verify your PayMuster account', data);
+        await this.sendTemplate('verification', to, 'Verify your PayMuster account', data);
     }
     async sendAccountCreatedNotification(to, data) {
         await this.sendVerificationEmail(to, data);
     }
+    async sendAccountDeletionEmail(to, data) {
+        await this.sendTemplate('account-deletion', to, '⚠️ Permanent Account Deletion Verification', data);
+    }
     async sendPasswordResetEmail(to, data) {
-        await this.send('password-reset', to, 'Reset your PayMuster password', data);
+        await this.sendTemplate('password-reset', to, 'Reset your PayMuster password', data);
     }
     async sendWelcomeEmail(to, data) {
-        await this.send('welcome', to, 'Welcome to PayMuster!', data);
+        await this.sendTemplate('welcome', to, 'Welcome to PayMuster!', data);
     }
     async sendPasswordChangedEmail(to, data) {
-        await this.send('password-changed', to, 'Your PayMuster password was changed', data);
+        await this.sendTemplate('password-changed', to, 'Your PayMuster password was changed', data);
     }
     async sendLoginNotificationEmail(to, data) {
-        await this.send('login-alert', to, 'New sign-in to PayMuster', data);
+        await this.sendTemplate('login-alert', to, 'New sign-in to PayMuster', data);
     }
     async sendGoogleLoginNotificationEmail(to, data) {
-        await this.send('google-login', to, 'Google sign-in to PayMuster', data);
+        await this.sendTemplate('google-login', to, 'Google sign-in to PayMuster', data);
     }
     static parseBrowserName(userAgent) {
         return parseBrowserName(userAgent);
     }
-    async send(template, to, subject, data) {
-        if (!this.transporter || !config.emailFrom) {
+    async sendTemplate(template, to, subject, data) {
+        if (!this.enabled || !this.transporter || !this.emailFrom) {
             throw new AppError('EMAIL_NOT_CONFIGURED', 'Email delivery is not configured. Please contact support.', 503);
         }
         const rendered = renderTemplate(template, data);
@@ -387,7 +492,7 @@ export class EmailService {
         for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
             try {
                 const result = await this.transporter.sendMail({
-                    from: config.emailFrom,
+                    from: this.emailFrom,
                     to,
                     subject,
                     html: rendered.html,
@@ -420,7 +525,7 @@ export class EmailService {
                 });
                 if (attempt < MAX_RETRY_ATTEMPTS) {
                     const delayMs = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-                    await sleep(delayMs);
+                    await this.sleep(delayMs);
                 }
             }
         }

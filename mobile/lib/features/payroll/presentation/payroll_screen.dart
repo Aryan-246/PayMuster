@@ -5,6 +5,9 @@ import '../../../components/feedback/pm_list_skeleton.dart';
 import '../../../components/layout/pm_card.dart';
 import '../../../core/network/tenant_api_client.dart';
 import '../../../theme/paymuster_tokens.dart';
+import '../../auth/domain/user.dart';
+import '../../auth/presentation/auth_controller.dart';
+import '../data/financial_api.dart';
 import '../data/payroll_api.dart';
 
 class PayrollScreen extends ConsumerStatefulWidget {
@@ -19,6 +22,7 @@ class _PayrollScreenState extends ConsumerState<PayrollScreen> {
   final _expandedRunIds = <String>{};
   String _query = '';
   String _status = 'ALL';
+  String _tab = 'runs';
 
   @override
   void dispose() {
@@ -68,6 +72,12 @@ class _PayrollScreenState extends ConsumerState<PayrollScreen> {
         ? PMColors.textPrimaryDark
         : PMColors.textPrimaryLight;
     final runs = ref.watch(payRunsProvider);
+    final role = ref.watch(
+      authControllerProvider.select((state) => state.user?.role),
+    );
+    final canViewFinancial = role == UserRole.owner ||
+        role == UserRole.superAdmin ||
+        role == UserRole.admin;
 
     return Scaffold(
       backgroundColor: background,
@@ -86,7 +96,36 @@ class _PayrollScreenState extends ConsumerState<PayrollScreen> {
           ),
         ],
       ),
-      body: runs.when(
+      body: Column(
+        children: [
+          if (canViewFinancial)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                PMSpacing.s5,
+                PMSpacing.s4,
+                PMSpacing.s5,
+                0,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  key: const Key('payroll-tab-segment'),
+                  segments: const [
+                    ButtonSegment(value: 'runs', label: Text('Pay Runs')),
+                    ButtonSegment(value: 'payments', label: Text('Payments')),
+                    ButtonSegment(value: 'expenses', label: Text('Expenses')),
+                  ],
+                  selected: {_tab},
+                  onSelectionChanged: (selection) =>
+                      setState(() => _tab = selection.first),
+                ),
+              ),
+            ),
+          Expanded(
+            child: switch (_tab) {
+              'payments' => const _PaymentsTab(),
+              'expenses' => const _ExpensesTab(),
+              _ => runs.when(
         loading: () => const PMListSkeleton(itemCount: 4),
         error: (error, _) => _PayrollErrorState(
           message: _errorMessage(error),
@@ -178,6 +217,10 @@ class _PayrollScreenState extends ConsumerState<PayrollScreen> {
             ),
           );
         },
+              ),
+            },
+          ),
+        ],
       ),
     );
   }
@@ -918,3 +961,490 @@ const _months = [
   'Nov',
   'Dec',
 ];
+
+// ---------------------------------------------------------------------------
+// Payments / Expenses tabs (owner.txt payroll section) — backend lists from
+// GET /financial/payments and /financial/expenses (view_payroll-gated).
+// ---------------------------------------------------------------------------
+
+class _PaymentsTab extends ConsumerStatefulWidget {
+  const _PaymentsTab();
+
+  @override
+  ConsumerState<_PaymentsTab> createState() => _PaymentsTabState();
+}
+
+class _PaymentsTabState extends ConsumerState<_PaymentsTab> {
+  final _items = <PaymentRecord>[];
+  int _page = 1;
+  bool _hasMore = false;
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final result = await ref.read(financialApiProvider).listPayments();
+      if (!mounted) return;
+      setState(() {
+        _items
+          ..clear()
+          ..addAll(result.items);
+        _page = result.page;
+        _hasMore = result.hasMore;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = _message(error);
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final result = await ref
+          .read(financialApiProvider)
+          .listPayments(page: _page + 1);
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(result.items);
+        _page = result.page;
+        _hasMore = result.hasMore;
+        _isLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  String _message(Object error) => error is TenantApiException
+      ? error.message
+      : 'Payments could not be loaded. Please try again.';
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final secondary =
+        isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
+
+    return _isLoading
+        ? const PMListSkeleton(itemCount: 5)
+        : _error != null
+            ? _PayrollErrorState(message: _error!, onRetry: _load)
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: _items.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          const SizedBox(height: 100),
+                          _FinancialEmptyState(
+                            icon: Icons.payments_outlined,
+                            title: 'No payments recorded',
+                            message:
+                                'Approved payroll payments will appear here once they are recorded.',
+                            secondary: secondary,
+                          ),
+                        ],
+                      )
+                    : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(PMSpacing.s5),
+                        itemCount: _items.length + (_hasMore ? 1 : 0),
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(height: PMSpacing.s3),
+                        itemBuilder: (context, index) {
+                          if (index >= _items.length) {
+                            return Padding(
+                              padding: const EdgeInsets.all(PMSpacing.s4),
+                              child: FilledButton.tonalIcon(
+                                onPressed: _loadMore,
+                                icon: const Icon(Icons.expand_more),
+                                label: const Text('Load more'),
+                              ),
+                            );
+                          }
+                          return _PaymentCard(payment: _items[index]);
+                        },
+                      ),
+              );
+  }
+}
+
+class _ExpensesTab extends ConsumerStatefulWidget {
+  const _ExpensesTab();
+
+  @override
+  ConsumerState<_ExpensesTab> createState() => _ExpensesTabState();
+}
+
+class _ExpensesTabState extends ConsumerState<_ExpensesTab> {
+  final _items = <ExpenseRecord>[];
+  int _page = 1;
+  bool _hasMore = false;
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final result = await ref.read(financialApiProvider).listExpenses();
+      if (!mounted) return;
+      setState(() {
+        _items
+          ..clear()
+          ..addAll(result.items);
+        _page = result.page;
+        _hasMore = result.hasMore;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = error is TenantApiException
+            ? error.message
+            : 'Expenses could not be loaded. Please try again.';
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final result = await ref
+          .read(financialApiProvider)
+          .listExpenses(page: _page + 1);
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(result.items);
+        _page = result.page;
+        _hasMore = result.hasMore;
+        _isLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final secondary =
+        isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
+
+    return _isLoading
+        ? const PMListSkeleton(itemCount: 5)
+        : _error != null
+            ? _PayrollErrorState(message: _error!, onRetry: _load)
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: _items.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          const SizedBox(height: 100),
+                          _FinancialEmptyState(
+                            icon: Icons.receipt_outlined,
+                            title: 'No expenses recorded',
+                            message:
+                                'Site expenses you record will appear here for approval tracking.',
+                            secondary: secondary,
+                          ),
+                        ],
+                      )
+                    : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(PMSpacing.s5),
+                        itemCount: _items.length + (_hasMore ? 1 : 0),
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(height: PMSpacing.s3),
+                        itemBuilder: (context, index) {
+                          if (index >= _items.length) {
+                            return Padding(
+                              padding: const EdgeInsets.all(PMSpacing.s4),
+                              child: FilledButton.tonalIcon(
+                                onPressed: _loadMore,
+                                icon: const Icon(Icons.expand_more),
+                                label: const Text('Load more'),
+                              ),
+                            );
+                          }
+                          return _ExpenseCard(expense: _items[index]);
+                        },
+                      ),
+              );
+  }
+}
+
+class _PaymentCard extends StatelessWidget {
+  const _PaymentCard({required this.payment});
+
+  final PaymentRecord payment;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor =
+        isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight;
+    final secondary =
+        isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
+
+    return PMCard.standard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      payment.staffName,
+                      style: PMTypography.headline.copyWith(color: textColor),
+                    ),
+                    if (payment.staffPublicId.isNotEmpty)
+                      Text(
+                        payment.staffPublicId,
+                        style: PMTypography.caption.copyWith(color: secondary),
+                      ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatCurrency(double.tryParse(payment.amount) ?? 0),
+                    style: PMTypography.headline.copyWith(color: textColor),
+                  ),
+                  const SizedBox(height: PMSpacing.s1),
+                  _FinancialStatusBadge(status: payment.status),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: PMSpacing.s3),
+          Wrap(
+            spacing: PMSpacing.s4,
+            runSpacing: PMSpacing.s2,
+            children: [
+              _MetadataValue(
+                icon: Icons.account_balance_outlined,
+                text: _humanize(payment.mode),
+              ),
+              _MetadataValue(
+                icon: Icons.schedule_outlined,
+                text: 'Recorded ${_formatDateTime(payment.createdAt)}',
+              ),
+              if (payment.referenceId != null)
+                _MetadataValue(
+                  icon: Icons.tag_outlined,
+                  text: 'Ref ${payment.referenceId}',
+                ),
+            ],
+          ),
+          if (payment.failureReason != null &&
+              payment.failureReason!.isNotEmpty) ...[
+            const SizedBox(height: PMSpacing.s3),
+            Text(
+              'Failure reason: ${payment.failureReason}',
+              style: PMTypography.caption.copyWith(
+                color: isDark
+                    ? PMColors.statusDangerDark
+                    : PMColors.statusDangerLight,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpenseCard extends StatelessWidget {
+  const _ExpenseCard({required this.expense});
+
+  final ExpenseRecord expense;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor =
+        isDark ? PMColors.textPrimaryDark : PMColors.textPrimaryLight;
+    final secondary =
+        isDark ? PMColors.textSecondaryDark : PMColors.textSecondaryLight;
+
+    return PMCard.standard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      expense.siteName.isNotEmpty
+                          ? expense.siteName
+                          : 'Unassigned site',
+                      style: PMTypography.headline.copyWith(color: textColor),
+                    ),
+                    Text(
+                      '${_humanize(expense.category)} · ${_formatDate(expense.date)}',
+                      style: PMTypography.caption.copyWith(color: secondary),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatCurrency(double.tryParse(expense.amount) ?? 0),
+                    style: PMTypography.headline.copyWith(color: textColor),
+                  ),
+                  const SizedBox(height: PMSpacing.s1),
+                  _FinancialStatusBadge(status: expense.status),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: PMSpacing.s3),
+          Wrap(
+            spacing: PMSpacing.s4,
+            runSpacing: PMSpacing.s2,
+            children: [
+              if (expense.paymentMethod != null)
+                _MetadataValue(
+                  icon: Icons.account_balance_outlined,
+                  text: _humanize(expense.paymentMethod!),
+                ),
+              if (expense.paidByName.isNotEmpty)
+                _MetadataValue(
+                  icon: Icons.person_outline,
+                  text: 'Paid by ${expense.paidByName}',
+                ),
+            ],
+          ),
+          if (expense.notes != null && expense.notes!.isNotEmpty) ...[
+            const SizedBox(height: PMSpacing.s3),
+            Text(
+              expense.notes!,
+              style: PMTypography.body.copyWith(color: secondary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FinancialStatusBadge extends StatelessWidget {
+  const _FinancialStatusBadge({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isGood = status == 'PAID' ||
+        status == 'APPROVED' ||
+        status == 'REIMBURSED' ||
+        status == 'VERIFIED';
+    final isBad = status == 'FAILED' || status == 'REJECTED';
+    final foreground = isBad
+        ? (isDark ? PMColors.statusDangerDark : PMColors.statusDangerLight)
+        : isGood
+            ? (isDark ? PMColors.statusSuccessDark : PMColors.statusSuccessLight)
+            : (isDark ? PMColors.statusWarningDark : PMColors.statusWarningLight);
+    final background = isBad
+        ? (isDark
+              ? PMColors.statusDangerContainerDark
+              : PMColors.statusDangerContainerLight)
+        : isGood
+            ? (isDark
+                  ? PMColors.statusSuccessContainerDark
+                  : PMColors.statusSuccessContainerLight)
+            : (isDark
+                  ? PMColors.statusWarningContainerDark
+                  : PMColors.statusWarningContainerLight);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PMSpacing.s2,
+        vertical: PMSpacing.s1,
+      ),
+      decoration: BoxDecoration(color: background, borderRadius: PMRadius.sm),
+      child: Text(
+        _humanize(status).toUpperCase(),
+        style: PMTypography.overline.copyWith(color: foreground),
+      ),
+    );
+  }
+}
+
+class _FinancialEmptyState extends StatelessWidget {
+  const _FinancialEmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.secondary,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Color secondary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(PMSpacing.s8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: secondary),
+            const SizedBox(height: PMSpacing.s3),
+            Text(title, style: PMTypography.headline),
+            const SizedBox(height: PMSpacing.s2),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: PMTypography.body.copyWith(color: secondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

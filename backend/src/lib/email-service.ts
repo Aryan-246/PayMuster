@@ -4,6 +4,7 @@ import { AppError } from './app-error.js';
 import { config } from './config.js';
 import { logger, maskEmail } from './logger.js';
 import type { EmailMessage, EmailProvider, ProviderHealth } from '../providers/contracts.js';
+import { getProviderUse, recordProviderFailure, recordProviderSuccess } from '../providers/usage-tracker.js';
 
 export interface EmailTemplateData {
   name?: string;
@@ -455,21 +456,65 @@ export class EmailService {
 
   async health(): Promise<ProviderHealth> {
     const configured = this.isConfigured;
+    if (!this.enabled) {
+      return {
+        provider: 'smtp',
+        kind: 'EMAIL',
+        status: 'DISABLED',
+        readiness: 'DISABLED',
+        enabled: false,
+        fallback: 'in-app-notification',
+        checkedAt: new Date().toISOString(),
+        detail: 'Email delivery is optional and remains non-transaction-critical.',
+      };
+    }
+    if (!configured) {
+      return {
+        provider: 'smtp',
+        kind: 'EMAIL',
+        status: 'INVALID_CONFIGURATION',
+        readiness: 'MISSING_CONFIGURATION',
+        enabled: true,
+        fallback: 'in-app-notification',
+        checkedAt: new Date().toISOString(),
+        detail: 'SMTP is enabled but not configured.',
+      };
+    }
+    // Live-verified delivery: the usage tracker records every real send.
+    const use = getProviderUse('smtp');
+    if (use && use.successCount > 0) {
+      return {
+        provider: 'smtp',
+        kind: 'EMAIL',
+        status: 'CONNECTED',
+        readiness: 'READY',
+        enabled: true,
+        fallback: 'in-app-notification',
+        checkedAt: new Date().toISOString(),
+        detail: `SMTP has delivered ${use.successCount} message(s) live; last delivery ${use.lastSuccessAt.toISOString()}.`,
+      };
+    }
+    if (use && use.failureCount > 0 && use.successCount === 0) {
+      return {
+        provider: 'smtp',
+        kind: 'EMAIL',
+        status: 'UNAVAILABLE',
+        readiness: 'READY',
+        enabled: true,
+        fallback: 'in-app-notification',
+        checkedAt: new Date().toISOString(),
+        detail: `SMTP is configured but every delivery attempt so far has failed; last error: ${use.lastError ?? 'unknown'}.`,
+      };
+    }
     return {
       provider: 'smtp',
       kind: 'EMAIL',
-      status: this.enabled && configured ? 'UNAVAILABLE' : 'DISABLED',
-      readiness: !this.enabled
-        ? 'DISABLED'
-        : configured
-          ? 'READY'
-          : 'MISSING_CONFIGURATION',
-      enabled: config.smtpEnabled,
+      status: 'ENABLED',
+      readiness: 'READY',
+      enabled: true,
       fallback: 'in-app-notification',
       checkedAt: new Date().toISOString(),
-      detail: this.enabled && configured
-        ? 'SMTP is configured; message delivery is verified per send attempt.'
-        : 'Email delivery is optional and remains non-transaction-critical.',
+      detail: 'SMTP is configured; message delivery is verified per send attempt.',
     };
   }
 
@@ -494,6 +539,7 @@ export class EmailService {
           text: message.text,
           headers: { 'X-PayMuster-Event-Id': message.eventId },
         });
+        recordProviderSuccess('smtp');
         logger.info('email.provider_sent', {
           eventId: message.eventId,
           recipient: maskEmail(message.to),
@@ -515,6 +561,7 @@ export class EmailService {
       }
     }
 
+    recordProviderFailure('smtp', lastError instanceof Error ? lastError.message : String(lastError));
     logger.error('email.provider_unavailable', lastError, {
       eventId: message.eventId,
       recipient: maskEmail(message.to),

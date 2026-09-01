@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../../features/auth/data/auth_provider.dart';
+import '../active_company_provider.dart';
 import '../env/env.dart';
 import '../observability/observability_reporter.dart';
 
@@ -30,6 +31,19 @@ class TenantApiException implements Exception {
   String toString() => message;
 }
 
+/// A successful envelope: `data` plus the endpoint's `meta` block.
+class TenantApiEnvelope {
+  const TenantApiEnvelope({required this.data, required this.meta});
+
+  final dynamic data;
+  final Map<String, dynamic> meta;
+
+  int? intMeta(String key) {
+    final value = meta[key];
+    return value is int ? value : value is num ? value.toInt() : null;
+  }
+}
+
 class TenantApiClient {
   TenantApiClient(this.ref, {http.Client? client})
     : _client = client ?? http.Client();
@@ -46,8 +60,41 @@ class TenantApiClient {
     return _request('GET', path, query: query);
   }
 
-  Future<dynamic> post(String path, {required Map<String, dynamic> body}) {
-    return _request('POST', path, body: body);
+  /// Authenticated GET that keeps the response envelope's `meta` block
+  /// (total / page / totalPages / unread …) alongside `data` — required by
+  /// paginated list screens. Non-2xx responses throw exactly like `get`.
+  Future<TenantApiEnvelope> getWithMeta(
+    String path, {
+    Map<String, String?> query = const {},
+  }) async {
+    final envelope = await _request('GET', path, query: query, keepMeta: true);
+    if (envelope is! Map<String, dynamic>) {
+      throw const TenantApiException(
+        'The server returned an unexpected response.',
+        code: 'INVALID_RESPONSE',
+      );
+    }
+    return TenantApiEnvelope(
+      data: envelope['data'],
+      meta: envelope['meta'] is Map<String, dynamic>
+          ? envelope['meta'] as Map<String, dynamic>
+          : const <String, dynamic>{},
+    );
+  }
+
+  /// Authenticated GET that does NOT require a company context — for
+  /// cross-company reads such as the user's switchable companies. No
+  /// x-company-id header is sent; the endpoint re-authenticates the user.
+  Future<dynamic> getWithoutTenant(String path) {
+    return _request('GET', path, requireTenant: false);
+  }
+
+  Future<dynamic> post(
+    String path, {
+    required Map<String, dynamic> body,
+    Map<String, String> extraHeaders = const {},
+  }) {
+    return _request('POST', path, body: body, extraHeaders: extraHeaders);
   }
 
   Future<dynamic> _request(
@@ -55,7 +102,10 @@ class TenantApiClient {
     String path, {
     Map<String, String?> query = const {},
     Map<String, dynamic>? body,
+    Map<String, String> extraHeaders = const {},
     bool canRetry = true,
+    bool requireTenant = true,
+    bool keepMeta = false,
   }) async {
     final auth = ref.read(authProvider);
     final token = await auth.getAccessToken();
@@ -67,25 +117,28 @@ class TenantApiClient {
       );
     }
 
-    var user = await auth.getCurrentUser();
-    if (user?.organizationId == null) {
-      try {
-        user = await auth.fetchMe();
-      } catch (_) {
+    String? organizationId;
+    if (requireTenant) {
+      var user = await auth.getCurrentUser();
+      if (user?.organizationId == null) {
+        try {
+          user = await auth.fetchMe();
+        } catch (_) {
+          throw const TenantApiException(
+            'A company must be selected before using this feature.',
+            code: 'COMPANY_CONTEXT_REQUIRED',
+            statusCode: 403,
+          );
+        }
+      }
+      organizationId = ref.read(activeCompanyProvider) ?? user?.organizationId;
+      if (organizationId == null || organizationId.isEmpty) {
         throw const TenantApiException(
           'A company must be selected before using this feature.',
           code: 'COMPANY_CONTEXT_REQUIRED',
           statusCode: 403,
         );
       }
-    }
-    final organizationId = user?.organizationId;
-    if (organizationId == null || organizationId.isEmpty) {
-      throw const TenantApiException(
-        'A company must be selected before using this feature.',
-        code: 'COMPANY_CONTEXT_REQUIRED',
-        statusCode: 403,
-      );
     }
 
     final queryParameters = <String, String>{
@@ -97,24 +150,22 @@ class TenantApiClient {
       queryParameters: queryParameters.isEmpty ? null : queryParameters,
     );
 
+    final baseHeaders = <String, String>{
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+      'x-company-id': ?organizationId,
+    };
+
     late final http.Response response;
     try {
       response = switch (method) {
         'GET' => await _client.get(
           uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-            'x-company-id': organizationId,
-          },
+          headers: {...baseHeaders, ...extraHeaders},
         ),
         'POST' => await _client.post(
           uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-            'x-company-id': organizationId,
-          },
+          headers: {...baseHeaders, ...extraHeaders},
           body: jsonEncode(body),
         ),
         _ => throw TenantApiException(
@@ -143,12 +194,16 @@ class TenantApiClient {
         path,
         query: query,
         body: body,
+        extraHeaders: extraHeaders,
         canRetry: false,
+        requireTenant: requireTenant,
+        keepMeta: keepMeta,
       );
     }
 
     try {
       final decoded = _decode(response);
+      if (keepMeta) return decoded;
       return decoded.containsKey('data') ? decoded['data'] : decoded;
     } on TenantApiException catch (error) {
       await _report(error, path);

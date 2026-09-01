@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { isAppError } from '../lib/app-error.js';
+import { isAppError, AppError } from '../lib/app-error.js';
 import { authService } from '../lib/auth-service.js';
 import { logger } from '../lib/logger.js';
+import { maintenanceService } from '../lib/maintenance-service.js';
 import { rateLimit } from '../lib/rate-limit.js';
 import { requireAuth } from '../middlewares/auth.js';
+import { prisma } from '../lib/prisma.js';
 const router = Router();
 const emailSchema = z.string().trim().email().max(254);
 const otpSchema = z.string().regex(/^\d{6}$/, 'Enter the 6-digit code from your email.');
@@ -88,6 +90,15 @@ function endpoint(handler) {
         }
     };
 }
+export async function requirePublicOperationalState(request, response, next) {
+    try {
+        await maintenanceService.assertOperational();
+        next();
+    }
+    catch (error) {
+        handleEndpointError(request, response, error);
+    }
+}
 const signupRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'signup' });
 const loginRateLimit = rateLimit(15 * 60_000, 20, { keyPrefix: 'login' });
 const otpRequestRateLimit = rateLimit(15 * 60_000, 5, {
@@ -96,7 +107,7 @@ const otpRequestRateLimit = rateLimit(15 * 60_000, 5, {
 });
 const otpVerificationRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'otp-verification' });
 const sessionRateLimit = rateLimit(15 * 60_000, 10, { keyPrefix: 'session' });
-router.post('/signup', signupRateLimit, endpoint(async (request, response) => {
+router.post('/signup', requirePublicOperationalState, signupRateLimit, endpoint(async (request, response) => {
     const data = signupSchema.parse(request.body);
     const result = await authService.register(data, requestContext(request));
     response.status(201).json({
@@ -109,7 +120,7 @@ router.post('/signup', signupRateLimit, endpoint(async (request, response) => {
         retryAfterSeconds: result.retryAfterSeconds,
     });
 }));
-router.post('/resend-verification', otpRequestRateLimit, endpoint(async (request, response) => {
+router.post('/resend-verification', requirePublicOperationalState, otpRequestRateLimit, endpoint(async (request, response) => {
     const { email } = z.object({ email: emailSchema }).parse(request.body);
     const issued = await authService.resendEmailVerification(email);
     response.json({
@@ -126,8 +137,8 @@ const verifyEmail = endpoint(async (request, response) => {
         message: result.alreadyVerified ? 'Your email is already verified.' : 'Email verified successfully. You can now sign in.',
     });
 });
-router.post('/verify-email', otpVerificationRateLimit, verifyEmail);
-router.post('/verify-otp', otpVerificationRateLimit, verifyEmail);
+router.post('/verify-email', requirePublicOperationalState, otpVerificationRateLimit, verifyEmail);
+router.post('/verify-otp', requirePublicOperationalState, otpVerificationRateLimit, verifyEmail);
 router.post('/login', loginRateLimit, endpoint(async (request, response) => {
     const data = loginSchema.parse(request.body);
     const result = await authService.authenticateEmail({ ...data, rememberMe: data.rememberMe ?? false }, requestContext(request));
@@ -136,7 +147,7 @@ router.post('/login', loginRateLimit, endpoint(async (request, response) => {
         ...result,
     });
 }));
-router.post('/forgot-password', otpRequestRateLimit, endpoint(async (request, response) => {
+router.post('/forgot-password', requirePublicOperationalState, otpRequestRateLimit, endpoint(async (request, response) => {
     const { email } = z.object({ email: emailSchema }).parse(request.body);
     const result = await authService.requestPasswordReset(email, requestContext(request));
     response.json({
@@ -144,7 +155,7 @@ router.post('/forgot-password', otpRequestRateLimit, endpoint(async (request, re
         retryAfterSeconds: result.retryAfterSeconds,
     });
 }));
-router.post('/reset-password', otpVerificationRateLimit, endpoint(async (request, response) => {
+router.post('/reset-password', requirePublicOperationalState, otpVerificationRateLimit, endpoint(async (request, response) => {
     const data = passwordResetSchema.parse(request.body);
     await authService.resetPassword(data, requestContext(request));
     response.json({ message: 'Password reset successfully. Please sign in with your new password.' });
@@ -167,13 +178,70 @@ router.post('/logout', endpoint(async (request, response) => {
     await authService.logout(refreshToken);
     response.json({ message: 'Signed out.' });
 }));
-router.delete('/account', requireAuth, endpoint(async (request, response) => {
+router.get('/me', requireAuth, endpoint(async (request, response) => {
+    // @ts-expect-error request.user is added by requireAuth middleware
+    const userId = request.user?.userId;
+    if (!userId) {
+        throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            id: true,
+            email: true,
+            role: true,
+            orgId: true,
+            firstName: true,
+            lastName: true,
+        }
+    });
+    if (!user) {
+        throw new AppError('NOT_FOUND', 'User not found', 404);
+    }
+    const joinRequests = await prisma.companyJoinRequest.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' }
+    });
+    response.json({
+        user: {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            orgId: user.orgId,
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        },
+        joinRequests
+    });
+}));
+router.post('/account/delete-otp', requireAuth, otpRequestRateLimit, endpoint(async (request, response) => {
+    // @ts-expect-error request.user is added by requireAuth middleware
+    const userId = request.user?.userId;
+    if (!userId) {
+        throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+    const { password } = z.object({ password: z.string().min(1) }).parse(request.body);
+    await authService.requestDeleteAccountOtp(userId, password, requestContext(request));
+    response.json({ message: 'A verification code has been sent.' });
+}));
+router.post('/account/verify-delete-otp', requireAuth, otpVerificationRateLimit, endpoint(async (request, response) => {
+    // @ts-expect-error request.user is added by requireAuth middleware
+    const userId = request.user?.userId;
+    if (!userId) {
+        throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+    }
+    const { otp } = z.object({ otp: otpSchema }).parse(request.body);
+    await authService.checkDeleteAccountOtp(userId, otp);
+    response.json({ message: 'Valid OTP.' });
+}));
+router.delete('/account', requireAuth, otpVerificationRateLimit, endpoint(async (request, response) => {
     // @ts-expect-error request.user is added by requireAuth middleware
     const userId = request.user?.userId;
     if (!userId) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } });
         return;
     }
+    const { otp } = z.object({ otp: otpSchema }).parse(request.body);
+    await authService.verifyDeleteAccountOtp(userId, otp);
     await authService.deleteAccount(userId);
     response.json({ message: 'Account permanently deleted.' });
 }));
